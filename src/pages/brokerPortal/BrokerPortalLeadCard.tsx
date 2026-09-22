@@ -44,6 +44,7 @@ import { useAppDispatch } from '@redux/hooks';
 import { showError as showErrorSnackbar, showSuccess } from '@redux/slices/snackbarSlice';
 import PostcodeAddressLookup from '@components/autocomplete/PostcodeAddressLookup';
 import { resolveIcon, type MuiIconComponent } from '@utils/resolveMuiIcon';
+import { dateInputToIso, toDateInputValue } from '@utils/dateUtils';
 import {
   COLLECTION_TIME_SLOTS,
   COMMUNICATION_TYPES,
@@ -97,7 +98,6 @@ const FREQUENCIES = [
   'Weekly',
   'Fortnightly',
   'Monthly',
-  'Ad-hoc / One-off',
 ];
 
 const fieldSx = {
@@ -133,16 +133,6 @@ interface EditForm {
   notes: string;
 }
 
-function toDateInput(value?: string | null) {
-  if (!value) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
-}
-
-function toIso(value: string) {
-  return value ? new Date(`${value}T12:00:00`).toISOString() : null;
-}
-
 function leadToForm(lead: BrokerLead): EditForm {
   return {
     companyName: lead.companyName || '',
@@ -152,7 +142,7 @@ function leadToForm(lead: BrokerLead): EditForm {
     email: lead.email || '',
     wasteType: lead.wasteType || '',
     frequency: lead.frequency || '',
-    collectionDate: toDateInput(lead.preferredCollectionDate),
+    collectionDate: toDateInputValue(lead.preferredCollectionDate),
     preferredTime: lead.preferredCollectionTime || lead.preferredContactTime || 'AnyTime',
     postalCode: lead.postalCode || '',
     collectionAddress: lead.addressLine1 || lead.siteAddress || '',
@@ -161,7 +151,7 @@ function leadToForm(lead: BrokerLead): EditForm {
     country: lead.country || 'United Kingdom',
     billingAddress: lead.billingAddress || '',
     priority: lead.priority || 'Medium',
-    followUpAt: toDateInput(lead.followUpAt),
+    followUpAt: toDateInputValue(lead.followUpAt),
     notes: lead.notes || '',
   };
 }
@@ -329,11 +319,12 @@ export default function BrokerPortalLeadCard({
         leadId,
         body: {
           communicationLogs: withNewLog(communicationType, communicationText.trim()),
-          ...(followUpDate ? { followUpAt: toIso(followUpDate) } : {}),
+          ...(followUpDate ? { followUpAt: dateInputToIso(followUpDate) } : {}),
           ...(contactedStatus ? { status: contactedStatus } : {}),
         },
       }).unwrap();
       setCommunicationText('');
+      setFollowUpDate('');
       dispatch(showSuccess('Communication logged'));
     } catch (error: any) {
       showRequestError(error, 'Failed to log communication');
@@ -510,7 +501,7 @@ export default function BrokerPortalLeadCard({
           email: editForm.email.trim(),
           wasteType: editForm.wasteType.trim(),
           frequency: editForm.frequency,
-          preferredCollectionDate: toIso(editForm.collectionDate),
+          preferredCollectionDate: dateInputToIso(editForm.collectionDate),
           preferredCollectionTime: editForm.preferredTime,
           addressLine1: editForm.collectionAddress.trim(),
           city: editForm.city,
@@ -519,7 +510,7 @@ export default function BrokerPortalLeadCard({
           country: editForm.country,
           billingAddress: editForm.billingAddress.trim(),
           priority: editForm.priority,
-          followUpAt: toIso(editForm.followUpAt),
+          followUpAt: dateInputToIso(editForm.followUpAt),
           notes: editForm.notes.trim(),
         },
       }).unwrap();

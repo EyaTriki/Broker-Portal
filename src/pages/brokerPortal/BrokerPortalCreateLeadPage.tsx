@@ -31,6 +31,7 @@ import { useAppDispatch } from '@redux/hooks';
 import { showError, showSuccess } from '@redux/slices/snackbarSlice';
 import { PATHS } from '@config/constants/paths';
 import { COLLECTION_TIME_SLOTS, type LeadPriority } from 'types/models/Broker';
+import { dateInputToIso } from '@utils/dateUtils';
 import { resolveIcon } from '@utils/resolveMuiIcon';
 import PostcodeAddressLookup from '@components/autocomplete/PostcodeAddressLookup';
 import { brokerPortalTheme } from './brokerPortalTheme';
@@ -64,7 +65,6 @@ const FREQUENCIES = [
   'Weekly',
   'Fortnightly',
   'Monthly',
-  'Ad-hoc / One-off',
 ];
 
 interface LeadForm {
@@ -153,16 +153,14 @@ export default function BrokerPortalCreateLeadPage() {
     wasteType: form.wasteType.trim(),
     frequency: form.frequency,
     industry: form.industry.trim(),
-    preferredCollectionDate: form.collectionDate
-      ? new Date(`${form.collectionDate}T12:00:00`).toISOString()
-      : null,
+    preferredCollectionDate: dateInputToIso(form.collectionDate),
     preferredCollectionTime: form.preferredTime,
     addressLine1: form.collectionAddress.trim(),
     city: form.city,
     region: form.region,
     postalCode: form.postalCode,
     country: form.country,
-    followUpAt: form.followUpAt ? new Date(`${form.followUpAt}T12:00:00`).toISOString() : null,
+    followUpAt: dateInputToIso(form.followUpAt),
     billingAddress: form.billingAddress.trim(),
     notes: form.notes.trim(),
     priority: form.priority,

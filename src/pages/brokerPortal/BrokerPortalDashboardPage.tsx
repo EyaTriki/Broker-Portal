@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import {
   Avatar,
   Box,
@@ -6,12 +7,17 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Grid,
   Stack,
   Typography,
 } from '@mui/material';
 import AccessTimeRoundedIcon from '@mui/icons-material/AccessTimeRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
 import PercentRoundedIcon from '@mui/icons-material/PercentRounded';
 import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded';
@@ -22,6 +28,7 @@ import {
 } from '@redux/apis/broker/brokerPortalApi';
 import { PATHS } from '@config/constants/paths';
 import { resolveIcon, type MuiIconComponent } from '@utils/resolveMuiIcon';
+import { toDateInputValue } from '@utils/dateUtils';
 import { brokerPortalTheme } from './brokerPortalTheme';
 import {
   formatPortalDate,
@@ -41,6 +48,7 @@ const CheckIcon = resolveIcon(CheckCircleRoundedIcon);
 const GroupsIcon = resolveIcon(GroupsRoundedIcon);
 const PercentIcon = resolveIcon(PercentRoundedIcon);
 const TrendingIcon = resolveIcon(TrendingUpRoundedIcon);
+const ErrorIcon = resolveIcon(ErrorOutlineRoundedIcon);
 
 function MetricCard({
   value,
@@ -99,10 +107,16 @@ function MetricCard({
 
 export default function BrokerPortalDashboardPage() {
   const navigate = useNavigate();
+  const [openOverdueDialog, setOpenOverdueDialog] = useState(false);
   const { data, isLoading } = useGetPortalDashboardQuery();
   const { data: ordersData } = useGetPortalOrdersQuery({});
   const dashboard = data?.data;
   const orders = ordersData?.data || [];
+
+  const overdueFollowUps = useMemo(
+    () => (dashboard?.followUps || []).filter((item) => item.overdue),
+    [dashboard?.followUps],
+  );
 
   const totalCommission = orders
     .filter((order) => !['Draft', 'Cancelled'].includes(order.status))
@@ -116,6 +130,15 @@ export default function BrokerPortalDashboardPage() {
   const openLead = (leadId: string) =>
     navigate(`${PATHS.BROKER_PORTAL.LEADS}?leadId=${leadId}`);
 
+  const openFollowUp = (item: { id: string; sourceType?: string }) => {
+    setOpenOverdueDialog(false);
+    if (item.sourceType === 'task') {
+      navigate(PATHS.BROKER_PORTAL.LEADS);
+      return;
+    }
+    openLead(String(item.id));
+  };
+
   if (isLoading && !dashboard) {
     return (
       <Stack minHeight={260} alignItems="center" justifyContent="center">
@@ -126,6 +149,64 @@ export default function BrokerPortalDashboardPage() {
 
   return (
     <Stack spacing={2.25}>
+      {overdueFollowUps.length > 0 && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 2,
+            px: 2,
+            py: 1.5,
+            borderRadius: 3,
+            bgcolor: '#fef2f2',
+            border: '1px solid #fecaca',
+          }}
+        >
+          <Stack direction="row" spacing={1.25} alignItems="center" flex={1} minWidth={0}>
+            <Box
+              sx={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                bgcolor: '#dc2626',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <ErrorIcon sx={{ fontSize: 18 }} />
+            </Box>
+            <Typography sx={{ fontSize: 14, color: '#991b1b' }}>
+              <Box component="span" sx={{ fontWeight: 700 }}>
+                {overdueFollowUps.length} overdue follow-up
+                {overdueFollowUps.length === 1 ? '' : 's'}
+              </Box>{' '}
+              require your attention — prospects are waiting for contact.
+            </Typography>
+          </Stack>
+          <Button
+            size="small"
+            onClick={() => setOpenOverdueDialog(true)}
+            sx={{
+              borderRadius: 999,
+              textTransform: 'none',
+              fontWeight: 700,
+              color: '#991b1b',
+              bgcolor: '#fecaca',
+              border: 'none',
+              flexShrink: 0,
+              px: 2,
+              '&:hover': { bgcolor: '#fca5a5' },
+            }}
+          >
+            View All
+          </Button>
+        </Box>
+      )}
+
       <PortalPageHeading
         title={`Welcome back, ${dashboard?.greetingName || 'Broker'}`}
         subtitle="Here is the latest performance and activity from your referrals."
@@ -290,6 +371,59 @@ export default function BrokerPortalDashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={openOverdueDialog}
+        onClose={() => setOpenOverdueDialog(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle sx={{ fontWeight: 800 }}>Overdue Follow-ups</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} pt={0.5}>
+            {overdueFollowUps.map((item) => (
+              <Card
+                key={`${item.sourceType || 'lead'}-${item.id}`}
+                variant="outlined"
+                sx={{ borderRadius: 2.5, borderColor: brokerPortalTheme.cardBorder }}
+              >
+                <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                  <Typography fontWeight={800}>{item.companyName}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {item.title}
+                    {item.followUpAt ? ` · Due ${toDateInputValue(item.followUpAt)}` : ''}
+                  </Typography>
+                  <Button
+                    size="small"
+                    onClick={() => openFollowUp(item)}
+                    sx={{
+                      mt: 1,
+                      textTransform: 'none',
+                      fontWeight: 800,
+                      color: brokerPortalTheme.accentGreen,
+                    }}
+                  >
+                    Open lead
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+            {overdueFollowUps.length === 0 && (
+              <Typography color="text.secondary" textAlign="center" py={2}>
+                No overdue follow-ups.
+              </Typography>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => setOpenOverdueDialog(false)}
+            sx={{ textTransform: 'none', fontWeight: 800, color: brokerPortalTheme.textSecondary }}
+          >
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
