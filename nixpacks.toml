@@ -1,0 +1,9 @@
+# Dokploy's default Nixpacks image is Node 18. Vite 8 needs Node 22.
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run preview -- --host 0.0.0.0 --port ${PORT:-3000}"

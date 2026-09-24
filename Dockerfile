@@ -5,7 +5,8 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# Include devDependencies even if Dokploy sets NODE_ENV=production.
+RUN npm ci --include=dev
 
 COPY . .
 
