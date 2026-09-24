@@ -1,0 +1,41 @@
+# Vite inlines VITE_* at build time. In Dokploy, set these under
+# Environment → Build Time Arguments (not only runtime variables).
+FROM node:22-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+ARG VITE_API_ENDPOINT
+ARG VITE_HASH_KEY
+ARG VITE_MEDIA_BASE_URL
+ARG VITE_MAPBOX_ACCESS_TOKEN
+ARG VITE_SOCKET_URL
+ARG VITE_OPTIMO_ROUTE
+ARG VITE_LOCATION_KEY
+ARG VITE_ONESIGNAL_APP_ID
+ARG VITE_EMAIL_CLASSIFIER_URL
+
+ENV VITE_API_ENDPOINT=$VITE_API_ENDPOINT \
+    VITE_HASH_KEY=$VITE_HASH_KEY \
+    VITE_MEDIA_BASE_URL=$VITE_MEDIA_BASE_URL \
+    VITE_MAPBOX_ACCESS_TOKEN=$VITE_MAPBOX_ACCESS_TOKEN \
+    VITE_SOCKET_URL=$VITE_SOCKET_URL \
+    VITE_OPTIMO_ROUTE=$VITE_OPTIMO_ROUTE \
+    VITE_LOCATION_KEY=$VITE_LOCATION_KEY \
+    VITE_ONESIGNAL_APP_ID=$VITE_ONESIGNAL_APP_ID \
+    VITE_EMAIL_CLASSIFIER_URL=$VITE_EMAIL_CLASSIFIER_URL
+
+RUN npm run build
+
+FROM nginx:1.27-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
