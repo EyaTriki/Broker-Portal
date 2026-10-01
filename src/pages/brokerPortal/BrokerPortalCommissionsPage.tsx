@@ -8,6 +8,11 @@ import {
   CircularProgress,
   Grid,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   Typography,
 } from '@mui/material';
 import AccessTimeRoundedIcon from '@mui/icons-material/AccessTimeRounded';
@@ -126,7 +131,7 @@ export default function BrokerPortalCommissionsPage() {
               textTransform: 'none',
             }}
           >
-            Statement
+            Download CSV
           </Button>
         }
       />
@@ -135,7 +140,7 @@ export default function BrokerPortalCommissionsPage() {
         <Grid item xs={12} md={4}>
           <SummaryCard
             value={formatPortalMoney(totalValue)}
-            title="Total Earned (YTD)"
+            title="Total Earned "
             helper="All commission records"
             color={brokerPortalTheme.textPrimary}
             background="#f1f5f9"
@@ -170,13 +175,15 @@ export default function BrokerPortalCommissionsPage() {
           <Box component="span" color={brokerPortalTheme.textPrimary} fontWeight={900}>
             {rate}
           </Box>{' '}
-          {broker?.commissionType === 'Percentage' ? 'of the order value' : 'per converted order'}.
-          Commissions are recorded against confirmed orders and paid after the customer payment is
-          processed.
+          {broker?.commissionType === 'Percentage'
+            ? 'of the order value for every lead that converts to a confirmed order'
+            : 'for every lead that converts to a confirmed order'}
+          . Commissions are paid within {broker?.commissionPaymentDays ?? 30} days after the customer
+          makes payment.
         </Typography>
       </PortalSectionCard>
 
-      <PortalSectionCard title="Commission Activity" subtitle={`${orders.length} records`}>
+      <PortalSectionCard title="Statement" subtitle={`Showing ${orders.length} records`}>
         {isLoading ? (
           <Stack minHeight={180} alignItems="center" justifyContent="center">
             <CircularProgress size={28} sx={{ color: brokerPortalTheme.accentGreen }} />
@@ -187,26 +194,50 @@ export default function BrokerPortalCommissionsPage() {
             <Typography variant="body2">Converted leads will appear here.</Typography>
           </PortalEmptyState>
         ) : (
-          <Stack spacing={1.25}>
-            {orders.map((order) => {
-              const paidOrder = order.commissionStatus === 'Paid';
-              return (
-                <Box
-                  key={order._id || order.id}
-                  sx={{
-                    border: `1px solid ${brokerPortalTheme.cardBorder}`,
-                    borderRadius: 3,
-                    p: 1.75,
-                  }}
-                >
-                  <Stack
-                    direction={{ xs: 'column', sm: 'row' }}
-                    justifyContent="space-between"
-                    spacing={1.25}
-                  >
-                    <Box>
-                      <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-                        <Typography fontWeight={900}>{order.companyName}</Typography>
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  {['Lead / Order', 'Order Date', 'Order Value', 'Rate', 'Commission', 'Status', 'Paid On'].map(
+                    (heading) => (
+                      <TableCell
+                        key={heading}
+                        sx={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          letterSpacing: '0.04em',
+                          color: brokerPortalTheme.textSecondary,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {heading.toUpperCase()}
+                      </TableCell>
+                    ),
+                  )}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {orders.map((order) => {
+                  const paidOrder = order.commissionStatus === 'Paid';
+                  return (
+                    <TableRow key={order._id || order.id}>
+                      <TableCell>
+                        <Typography fontWeight={800} fontSize={14}>
+                          {order.companyName}
+                        </Typography>
+                        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+                          {order.referenceCode}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{formatPortalDate(order.createdAt)}</TableCell>
+                      <TableCell>{formatPortalMoney(order.orderAmount)}</TableCell>
+                      <TableCell>{rate}</TableCell>
+                      <TableCell>
+                        <Typography fontWeight={800} color={brokerPortalTheme.accentGreen}>
+                          {formatPortalMoney(order.commissionAmount)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
                         <Chip
                           size="small"
                           label={paidOrder ? 'Paid' : order.commissionStatus || 'Pending'}
@@ -218,41 +249,18 @@ export default function BrokerPortalCommissionsPage() {
                             fontWeight: 800,
                           }}
                         />
-                      </Stack>
-                      <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-                        {order.referenceCode}
+                      </TableCell>
+                      <TableCell>
                         {paidOrder && order.commissionPaidAt
-                          ? ` · Paid ${formatPortalDate(order.commissionPaidAt)}`
-                          : ''}
-                      </Typography>
-                    </Box>
-                    <Stack direction="row" spacing={{ xs: 2, sm: 4 }}>
-                      <Box>
-                        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-                          Order Value
-                        </Typography>
-                        <Typography fontWeight={800}>{formatPortalMoney(order.orderAmount)}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-                          Rate
-                        </Typography>
-                        <Typography fontWeight={800}>{rate}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-                          Earned
-                        </Typography>
-                        <Typography fontWeight={900} color={brokerPortalTheme.accentGreen}>
-                          {formatPortalMoney(order.commissionAmount)}
-                        </Typography>
-                      </Box>
-                    </Stack>
-                  </Stack>
-                </Box>
-              );
-            })}
-          </Stack>
+                          ? formatPortalDate(order.commissionPaidAt)
+                          : '—'}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </Box>
         )}
       </PortalSectionCard>
     </Stack>

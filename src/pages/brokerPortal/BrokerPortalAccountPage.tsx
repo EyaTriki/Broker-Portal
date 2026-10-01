@@ -1,10 +1,13 @@
+import { useEffect, useState } from 'react';
 import {
   Avatar,
   Box,
+  Button,
   Card,
   CardContent,
   Grid,
   Stack,
+  TextField,
   Typography,
 } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
@@ -14,11 +17,14 @@ import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
 import {
   useGetPortalDashboardQuery,
   useGetPortalOrdersQuery,
+  useUpdatePortalProfileMutation,
 } from '@redux/apis/broker/brokerPortalApi';
+import { useAppDispatch } from '@redux/hooks';
+import { showError, showSuccess } from '@redux/slices/snackbarSlice';
 import { resolveIcon, type MuiIconComponent } from '@utils/resolveMuiIcon';
 import { brokerPortalTheme } from './brokerPortalTheme';
 import { formatPortalDate, formatPortalMoney, getLeadInitials } from './brokerPortalFigma';
-import { PortalPageHeading, PortalSectionCard, portalCardSx } from './BrokerPortalUi';
+import { PortalPageHeading, PortalSectionCard, portalCardSx, portalPrimaryButtonSx } from './BrokerPortalUi';
 
 const EmailIcon = resolveIcon(EmailOutlinedIcon);
 const LocationIcon = resolveIcon(LocationOnOutlinedIcon);
@@ -65,16 +71,35 @@ function Detail({
 export default function BrokerPortalAccountPage() {
   const { data } = useGetPortalDashboardQuery();
   const { data: ordersData } = useGetPortalOrdersQuery({});
+  const dispatch = useAppDispatch();
   const broker = data?.data?.broker;
+  const [bankAccountName, setBankAccountName] = useState('');
+  const [bankSortCode, setBankSortCode] = useState('');
+  const [bankAccountNumber, setBankAccountNumber] = useState('');
+  const [saveProfile, { isLoading: savingProfile }] = useUpdatePortalProfileMutation();
   const summary = data?.data?.summary;
   const totalLeads = data?.data?.pipeline.reduce((sum, stage) => sum + stage.count, 0) || 0;
   const commission = (ordersData?.data || [])
     .filter((order) => !['Draft', 'Cancelled'].includes(order.status))
     .reduce((sum, order) => sum + Number(order.commissionAmount || 0), 0);
-  const rate =
-    broker?.commissionType === 'Fixed'
-      ? `${formatPortalMoney(broker.commissionValue)} per order`
-      : `${Number(broker?.commissionValue || 0)}% per order`;
+  useEffect(() => {
+    setBankAccountName(broker?.bankAccountName || '');
+    setBankSortCode(broker?.bankSortCode || '');
+    setBankAccountNumber(broker?.bankAccountNumber || '');
+  }, [broker?.bankAccountName, broker?.bankSortCode, broker?.bankAccountNumber]);
+
+  const saveBankDetails = async () => {
+    try {
+      await saveProfile({
+        bankAccountName: bankAccountName.trim(),
+        bankSortCode: bankSortCode.trim(),
+        bankAccountNumber: bankAccountNumber.trim(),
+      }).unwrap();
+      dispatch(showSuccess('Bank details saved'));
+    } catch (error: any) {
+      dispatch(showError(error?.data?.message || 'Failed to save bank details'));
+    }
+  };
 
   return (
     <Stack spacing={2.25}>
@@ -137,13 +162,67 @@ export default function BrokerPortalAccountPage() {
         </Grid>
       </PortalSectionCard>
 
+      {broker?.accountManagerName && (
+        <PortalSectionCard title="Your Account Manager">
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+            <Avatar
+              sx={{
+                width: 48,
+                height: 48,
+                bgcolor: brokerPortalTheme.accentGreenTint,
+                color: brokerPortalTheme.accentGreen,
+                fontWeight: 900,
+              }}
+            >
+              {getLeadInitials(broker.accountManagerName)}
+            </Avatar>
+            <Box flex={1}>
+              <Typography fontWeight={900}>{broker.accountManagerName}</Typography>
+              <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
+                London Waste Management
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1}>
+              {broker.accountManagerPhone && (
+                <Button
+                  variant="outlined"
+                  href={`tel:${broker.accountManagerPhone.replace(/\s+/g, '')}`}
+                  sx={{ textTransform: 'none', fontWeight: 800, borderRadius: 2.5 }}
+                >
+                  Call
+                </Button>
+              )}
+              {broker.accountManagerEmail && (
+                <Button
+                  variant="outlined"
+                  href={`mailto:${broker.accountManagerEmail}`}
+                  sx={{ textTransform: 'none', fontWeight: 800, borderRadius: 2.5 }}
+                >
+                  Email
+                </Button>
+              )}
+            </Stack>
+          </Stack>
+        </PortalSectionCard>
+      )}
+
       <PortalSectionCard title="Commission Agreement">
         <Grid container spacing={1.25}>
           {[
-            { label: 'Commission', value: rate },
+            {
+              label: 'Per Order',
+              value:
+                broker?.commissionType === 'Fixed'
+                  ? formatPortalMoney(broker.commissionValue)
+                  : `${Number(broker?.commissionValue || 0)}%`,
+            },
             { label: 'Type', value: broker?.commissionType || 'Percentage' },
+            {
+              label: 'Day Payment',
+              value: `${broker?.commissionPaymentDays ?? 30} days after customer payment`,
+            },
           ].map((item) => (
-            <Grid item xs={12} sm={6} key={item.label}>
+            <Grid item xs={12} sm={4} key={item.label}>
               <Box
                 sx={{
                   bgcolor: '#f7f9f8',
@@ -162,6 +241,49 @@ export default function BrokerPortalAccountPage() {
             </Grid>
           ))}
         </Grid>
+      </PortalSectionCard>
+
+      <PortalSectionCard
+        title="Bank Details"
+        subtitle="Used for commission payments. Saved details are used only for paying your commission."
+      >
+        <Grid container spacing={1.25}>
+          <Grid item xs={12} md={4}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Name of Account"
+              value={bankAccountName}
+              onChange={(event) => setBankAccountName(event.target.value)}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Sort Code"
+              value={bankSortCode}
+              onChange={(event) => setBankSortCode(event.target.value)}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Account Number"
+              value={bankAccountNumber}
+              onChange={(event) => setBankAccountNumber(event.target.value)}
+            />
+          </Grid>
+        </Grid>
+        <Button
+          variant="contained"
+          onClick={saveBankDetails}
+          disabled={savingProfile}
+          sx={{ ...portalPrimaryButtonSx, mt: 1.5 }}
+        >
+          {savingProfile ? 'Saving…' : 'Save Bank Details'}
+        </Button>
       </PortalSectionCard>
 
       <PortalSectionCard title="Your Performance">

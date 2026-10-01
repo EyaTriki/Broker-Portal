@@ -5,6 +5,7 @@ export const ENDPOINTS = {
   GET_USER_NOTIFICATIONS: 'notifications',
   MARK_NOTIFICATIONS_READ: 'notifications/read-all',
   BROKER_PORTAL_DASHBOARD: 'broker/me/dashboard',
+  BROKER_PORTAL_PROFILE: 'broker/me/profile',
   BROKER_PORTAL_LEADS: 'broker/me/leads',
   BROKER_PORTAL_QUOTE_REQUESTS: 'broker/me/quote-requests',
   BROKER_PORTAL_NEGOTIATIONS: 'broker/me/negotiations',

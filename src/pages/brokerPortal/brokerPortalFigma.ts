@@ -8,13 +8,23 @@ import type { LeadStage } from 'types/models/Broker';
  * office can never disagree about where a lead stands.
  */
 export const BROKER_PORTAL_STAGE_DESCRIPTIONS: Record<LeadStage, string> = {
-  SubmitLead: 'Share the opportunity with London Waste Management',
-  Contact: 'Reach out and log every interaction',
-  RequestQuote: 'Submit requirements; LWM prices the quote before you negotiate',
-  Negotiation: 'Discuss customer feedback and price changes',
-  PriceApproval: 'Confirm the final price with the customer',
-  ContactBackOffice: 'Hand the agreed work to the LWM team',
+  SubmitLead: 'Review, update and validate the lead information',
+  Contact: 'Reach out to the prospect',
+  RequestQuote: 'Submit a quotation request for this lead',
+  Negotiation: 'Track discussions, counteroffers and price changes',
+  PriceApproval: 'Confirm the final price accepted by the customer',
+  ContactBackOffice: 'Hand over to create the order',
   Lost: 'This opportunity is closed',
+};
+
+/** Short line under the current-stage title on the step header. */
+export const BROKER_PORTAL_STAGE_HINTS: Record<Exclude<LeadStage, 'Lost'>, string> = {
+  SubmitLead: 'Capture & validate the lead',
+  Contact: 'Reach out & log interactions',
+  RequestQuote: 'Send a quotation request',
+  Negotiation: 'Discuss & counteroffer',
+  PriceApproval: 'Confirm the final price',
+  ContactBackOffice: 'Hand over to create the order',
 };
 
 export function getLeadInitials(companyName = '') {

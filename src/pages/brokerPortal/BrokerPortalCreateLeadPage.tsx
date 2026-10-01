@@ -26,12 +26,17 @@ import { useNavigate } from 'react-router-dom';
 import {
   useCreatePortalDocumentMutation,
   useCreatePortalLeadMutation,
+  useUpdatePortalLeadMutation,
 } from '@redux/apis/broker/brokerPortalApi';
 import { useAppDispatch } from '@redux/hooks';
 import { showError, showSuccess } from '@redux/slices/snackbarSlice';
 import { PATHS } from '@config/constants/paths';
-import { COLLECTION_TIME_SLOTS, type LeadPriority } from 'types/models/Broker';
-import { dateInputToIso } from '@utils/dateUtils';
+import {
+  COLLECTION_DAYS,
+  COLLECTION_FREQUENCIES,
+  COLLECTION_TIME_SLOTS,
+  type LeadPriority,
+} from 'types/models/Broker';
 import { resolveIcon } from '@utils/resolveMuiIcon';
 import PostcodeAddressLookup from '@components/autocomplete/PostcodeAddressLookup';
 import { brokerPortalTheme } from './brokerPortalTheme';
@@ -58,54 +63,49 @@ const PersonIcon = resolveIcon(PersonOutlineRoundedIcon);
 const CameraIcon = resolveIcon(PhotoCameraOutlinedIcon);
 const ScannerIcon = resolveIcon(ScannerOutlinedIcon);
 
-const FREQUENCIES = [
-  'Daily',
-  '2x per week',
-  '3x per week',
-  'Weekly',
-  'Fortnightly',
-  'Monthly',
-];
-
 interface LeadForm {
   companyName: string;
   industry: string;
-  contactName: string;
+  firstName: string;
+  lastName: string;
   phone: string;
+  secondaryPhone: string;
   email: string;
   wasteType: string;
   frequency: string;
-  collectionDate: string;
+  collectionDays: string[];
   preferredTime: string;
   postalCode: string;
   collectionAddress: string;
   city: string;
   region: string;
   country: string;
+  billingPostcode: string;
   billingAddress: string;
   priority: LeadPriority;
-  followUpAt: string;
   notes: string;
 }
 
 const emptyForm: LeadForm = {
   companyName: '',
   industry: '',
-  contactName: '',
+  firstName: '',
+  lastName: '',
   phone: '',
+  secondaryPhone: '',
   email: '',
   wasteType: '',
   frequency: '',
-  collectionDate: '',
+  collectionDays: [],
   preferredTime: 'AnyTime',
   postalCode: '',
   collectionAddress: '',
   city: '',
   region: '',
   country: 'United Kingdom',
+  billingPostcode: '',
   billingAddress: '',
   priority: 'Medium',
-  followUpAt: '',
   notes: '',
 };
 
@@ -136,45 +136,88 @@ export default function BrokerPortalCreateLeadPage() {
   const dispatch = useAppDispatch();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
+  const formRef = useRef<LeadForm>(emptyForm);
+  const cardFileRef = useRef<File | null>(null);
+  const draftLeadIdRef = useRef<string | null>(null);
+  const documentAttachedRef = useRef(false);
   const [form, setForm] = useState<LeadForm>(emptyForm);
   const [cardFile, setCardFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
-  const [createLead, { isLoading }] = useCreatePortalLeadMutation();
-  const [createDocument] = useCreatePortalDocumentMutation();
+  const [draftLeadId, setDraftLeadId] = useState<string | null>(null);
+  const [createLead, { isLoading: creatingLead }] = useCreatePortalLeadMutation();
+  const [updateLead, { isLoading: updatingLead }] = useUpdatePortalLeadMutation();
+  const [createDocument, { isLoading: attachingDocument }] = useCreatePortalDocumentMutation();
+  const isLoading = creatingLead || updatingLead || attachingDocument;
+  formRef.current = form;
 
-  const update = (patch: Partial<LeadForm>) => setForm((current) => ({ ...current, ...patch }));
+  const update = (patch: Partial<LeadForm>) => {
+    setForm((current) => {
+      const next = { ...current, ...patch };
+      formRef.current = next;
+      return next;
+    });
+  };
 
-  const buildPayload = () => ({
-    companyName: form.companyName.trim(),
-    contactName: form.contactName.trim(),
-    phone: form.phone.trim(),
-    email: form.email.trim(),
-    wasteType: form.wasteType.trim(),
-    frequency: form.frequency,
-    industry: form.industry.trim(),
-    preferredCollectionDate: dateInputToIso(form.collectionDate),
-    preferredCollectionTime: form.preferredTime,
-    addressLine1: form.collectionAddress.trim(),
-    city: form.city,
-    region: form.region,
-    postalCode: form.postalCode,
-    country: form.country,
-    followUpAt: dateInputToIso(form.followUpAt),
-    billingAddress: form.billingAddress.trim(),
-    notes: form.notes.trim(),
-    priority: form.priority,
+  const buildPayload = (source: LeadForm) => ({
+    companyName: source.companyName.trim(),
+    firstName: source.firstName.trim(),
+    lastName: source.lastName.trim(),
+    contactName: [source.firstName, source.lastName].filter(Boolean).join(' ').trim(),
+    phone: source.phone.trim(),
+    secondaryPhone: source.secondaryPhone.trim(),
+    email: source.email.trim(),
+    wasteType: source.wasteType.trim(),
+    frequency: source.frequency,
+    industry: source.industry.trim(),
+    preferredCollectionDays: source.collectionDays.join(','),
+    preferredCollectionTime: source.preferredTime,
+    addressLine1: source.collectionAddress.trim(),
+    city: source.city,
+    region: source.region,
+    postalCode: source.postalCode,
+    country: source.country,
+    billingAddress: source.billingAddress.trim(),
+    notes: source.notes.trim(),
+    priority: source.priority,
   });
 
-  const attachCard = async (targetLeadId: string) => {
-    if (!cardFile) return;
+  const attachCard = async (targetLeadId: string, file: File, companyName: string) => {
     const body = new FormData();
-    body.append('file', cardFile);
+    body.append('file', file);
     body.append('leadId', targetLeadId);
-    body.append('companyName', form.companyName);
-    body.append('title', `Lead source document - ${form.companyName}`);
+    body.append('companyName', companyName);
+    body.append('title', `Lead source document - ${companyName || 'draft lead'}`);
     body.append('type', 'BusinessCard');
     await createDocument(body).unwrap();
+  };
+
+  const saveDraft = async (source: LeadForm, file: File, jobTitle?: string) => {
+    const body = {
+      ...buildPayload(source),
+      ...(jobTitle ? { jobTitle } : {}),
+      status: 'Draft' as const,
+      leadSource: 'Business Card',
+      customerType: 'Company',
+      customerCategory: 'Prospect',
+    };
+
+    let leadId = draftLeadIdRef.current;
+    if (!leadId) {
+      const result = await createLead(body).unwrap();
+      leadId = String(result.data._id || result.data.id || '');
+      if (!leadId) {
+        throw new Error('Draft lead was created without an id');
+      }
+      draftLeadIdRef.current = leadId;
+      setDraftLeadId(leadId);
+    } else {
+      await updateLead({ leadId, body }).unwrap();
+    }
+
+    documentAttachedRef.current = false;
+    await attachCard(leadId, file, source.companyName.trim());
+    documentAttachedRef.current = true;
   };
 
   const readCard = async (file: File) => {
@@ -183,6 +226,7 @@ export default function BrokerPortalCreateLeadPage() {
       dispatch(showError(error));
       return;
     }
+    cardFileRef.current = file;
     setCardFile(file);
     if (!canScanFile(file)) {
       dispatch(
@@ -194,31 +238,55 @@ export default function BrokerPortalCreateLeadPage() {
     }
 
     setScanProgress({ status: 'Loading scanner', progress: 0 });
+    let parsed;
     try {
-      const parsed = await scanBusinessCard(file, setScanProgress);
-      const parsedContactName = [parsed.firstName, parsed.lastName].filter(Boolean).join(' ').trim();
-      const parsedAddress = parsed.addressLine1 || '';
-      update({
-        companyName: parsed.companyName || form.companyName,
-        contactName: parsedContactName || form.contactName,
-        phone: parsed.phone || parsed.mobile || form.phone,
-        email: parsed.email || form.email,
-        postalCode: parsed.postalCode || form.postalCode,
-        collectionAddress: parsedAddress || form.collectionAddress,
-        city: parsed.city || form.city,
-      });
-      const count = countExtractedFields(parsed);
-      dispatch(
-        count
-          ? showSuccess(`${count} field${count === 1 ? '' : 's'} filled from the document`)
-          : showError('No fields were read. Please enter the lead manually.'),
-      );
-    } catch (error) {
-      console.error('Business card scan failed:', error);
-      dispatch(showError('The document could not be read. You can still fill the form manually.'));
-    } finally {
+      parsed = await scanBusinessCard(file, setScanProgress);
+    } catch (scanError) {
+      console.error('Business card scan failed:', scanError);
       setScanProgress(null);
+      dispatch(showError('The document could not be read. You can still fill the form manually.'));
+      return;
     }
+
+    const current = formRef.current;
+    const next: LeadForm = {
+      ...current,
+      companyName: parsed.companyName || current.companyName,
+      firstName: parsed.firstName || current.firstName,
+      lastName: parsed.lastName || current.lastName,
+      phone: parsed.phone || parsed.mobile || current.phone,
+      email: parsed.email || current.email,
+      postalCode: parsed.postalCode || current.postalCode,
+      collectionAddress: parsed.addressLine1 || current.collectionAddress,
+      city: parsed.city || current.city,
+    };
+    formRef.current = next;
+    setForm(next);
+
+    const count = countExtractedFields(parsed);
+    if (!count) {
+      setScanProgress(null);
+      dispatch(showError('No fields were read. Please enter the lead manually.'));
+      return;
+    }
+
+    setScanProgress({ status: 'Saving draft', progress: 1 });
+    try {
+      await saveDraft(next, file, parsed.jobTitle);
+    } catch (requestError: any) {
+      setScanProgress(null);
+      dispatch(
+        showError(requestError?.data?.message || requestError?.message || 'Failed to save the draft lead'),
+      );
+      return;
+    }
+
+    setScanProgress(null);
+    dispatch(
+      showSuccess(
+        `Draft lead saved with ${count} field${count === 1 ? '' : 's'} from the document`,
+      ),
+    );
   };
 
   const clearFileInputs = () => {
@@ -236,8 +304,9 @@ export default function BrokerPortalCreateLeadPage() {
   const validate = () => {
     if (!form.companyName.trim()) return 'Company / Business Name is required';
     if (!form.industry.trim()) return 'Industry is required';
-    if (!form.contactName.trim()) return 'Contact Name is required';
-    if (!form.phone.trim()) return 'Phone is required';
+    if (!form.firstName.trim()) return 'First Name is required';
+    if (!form.lastName.trim()) return 'Last Name is required';
+    if (!form.phone.trim()) return 'Phone Number 1 is required';
     if (!form.wasteType.trim()) return 'Waste Type is required';
     if (!form.collectionAddress.trim()) return 'Collection Address is required';
     return null;
@@ -250,29 +319,40 @@ export default function BrokerPortalCreateLeadPage() {
       return;
     }
 
-    try {
-      const result = await createLead({
-        ...buildPayload(),
-        leadSource: cardFile ? 'Business Card' : 'Broker Portal',
-        customerType: 'Company',
-        customerCategory: 'Prospect',
-      }).unwrap();
+    const source = formRef.current;
+    const file = cardFileRef.current;
+    const payload = {
+      ...buildPayload(source),
+      leadSource: file ? 'Business Card' : 'Broker Portal',
+      customerType: 'Company' as const,
+      customerCategory: 'Prospect',
+      status: 'NewLead' as const,
+    };
 
-      const createdLeadId = result.data._id || result.data.id;
-      if (cardFile && createdLeadId) {
-        try {
-          await attachCard(createdLeadId);
-        } catch {
-          dispatch(showError('Lead submitted, but the source document could not be attached.'));
-          navigate(PATHS.BROKER_PORTAL.LEADS);
+    try {
+      let leadId = draftLeadIdRef.current;
+      if (leadId) {
+        await updateLead({ leadId, body: payload }).unwrap();
+      } else {
+        const result = await createLead(payload).unwrap();
+        leadId = String(result.data._id || result.data.id || '');
+        if (!leadId) {
+          dispatch(showError('Lead was submitted without an id'));
           return;
         }
+        draftLeadIdRef.current = leadId;
+        setDraftLeadId(leadId);
+      }
+
+      if (file && !documentAttachedRef.current) {
+        await attachCard(leadId, file, source.companyName.trim());
+        documentAttachedRef.current = true;
       }
 
       dispatch(showSuccess('Lead submitted successfully'));
       navigate(PATHS.BROKER_PORTAL.LEADS);
     } catch (requestError: any) {
-      dispatch(showError(requestError?.data?.message || 'Failed to submit lead'));
+      dispatch(showError(requestError?.data?.message || requestError?.message || 'Failed to submit lead'));
     }
   };
 
@@ -312,10 +392,11 @@ export default function BrokerPortalCreateLeadPage() {
           onDrop={(event) => {
             event.preventDefault();
             setDragging(false);
+            if (isLoading || scanProgress) return;
             const file = event.dataTransfer.files?.[0];
             if (file) void readCard(file);
           }}
-          onClick={() => !scanProgress && inputRef.current?.click()}
+          onClick={() => !isLoading && !scanProgress && inputRef.current?.click()}
           sx={{
             border: `2px dashed ${
               dragging ? brokerPortalTheme.accentGreen : brokerPortalTheme.cardBorder
@@ -355,13 +436,16 @@ export default function BrokerPortalCreateLeadPage() {
                 sx={{ fontWeight: 800 }}
               />
               <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
-                Tap to replace this document
+                {draftLeadId
+                  ? 'Saved as a draft lead. Complete the form, then submit.'
+                  : 'Tap to replace this document'}
               </Typography>
               <Button
                 size="small"
                 startIcon={<DeleteIcon />}
                 onClick={(event) => {
                   event.stopPropagation();
+                  cardFileRef.current = null;
                   setCardFile(null);
                   clearFileInputs();
                 }}
@@ -437,7 +521,7 @@ export default function BrokerPortalCreateLeadPage() {
       </PortalSectionCard>
 
       <PortalSectionCard
-        title="Contact"
+        title="Contact Person"
         icon={
           <SectionIcon>
             <PersonIcon sx={{ fontSize: 19 }} />
@@ -450,10 +534,9 @@ export default function BrokerPortalCreateLeadPage() {
               fullWidth
               required
               size="small"
-              label="Contact Name"
-              placeholder="Full name"
-              value={form.contactName}
-              onChange={(event) => update({ contactName: event.target.value })}
+              label="First Name"
+              value={form.firstName}
+              onChange={(event) => update({ firstName: event.target.value })}
               sx={fieldSx}
             />
           </Grid>
@@ -462,10 +545,31 @@ export default function BrokerPortalCreateLeadPage() {
               fullWidth
               required
               size="small"
-              label="Phone"
+              label="Last Name"
+              value={form.lastName}
+              onChange={(event) => update({ lastName: event.target.value })}
+              sx={fieldSx}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              required
+              size="small"
+              label="Phone Number 1"
               placeholder="+44 7700 900000"
               value={form.phone}
               onChange={(event) => update({ phone: event.target.value })}
+              sx={fieldSx}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Phone Number 2 (optional)"
+              value={form.secondaryPhone}
+              onChange={(event) => update({ secondaryPhone: event.target.value })}
               sx={fieldSx}
             />
           </Grid>
@@ -516,24 +620,43 @@ export default function BrokerPortalCreateLeadPage() {
               sx={fieldSx}
             >
               <MenuItem value="">Select frequency...</MenuItem>
-              {FREQUENCIES.map((frequency) => (
+              {COLLECTION_FREQUENCIES.map((frequency) => (
                 <MenuItem value={frequency} key={frequency}>
                   {frequency}
                 </MenuItem>
               ))}
             </TextField>
           </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              size="small"
-              type="date"
-              label="Preferred Collection Date"
-              InputLabelProps={{ shrink: true }}
-              value={form.collectionDate}
-              onChange={(event) => update({ collectionDate: event.target.value })}
-              sx={fieldSx}
-            />
+          <Grid item xs={12}>
+            <Typography variant="body2" fontWeight={800} mb={1}>
+              Preferred Collection Day (select all that apply)
+            </Typography>
+            <Stack direction="row" flexWrap="wrap" gap={0.75}>
+              {COLLECTION_DAYS.map((day) => {
+                const selected = form.collectionDays.includes(day);
+                return (
+                  <Chip
+                    key={day}
+                    label={day}
+                    onClick={() =>
+                      update({
+                        collectionDays: selected
+                          ? form.collectionDays.filter((item) => item !== day)
+                          : [...form.collectionDays, day],
+                      })
+                    }
+                    sx={{
+                      fontWeight: 800,
+                      bgcolor: selected ? brokerPortalTheme.accentGreen : '#fff',
+                      color: selected ? '#fff' : brokerPortalTheme.textPrimary,
+                      border: `1px solid ${
+                        selected ? brokerPortalTheme.accentGreen : brokerPortalTheme.cardBorder
+                      }`,
+                    }}
+                  />
+                );
+              })}
+            </Stack>
           </Grid>
           <Grid item xs={12} md={6}>
             <TextField
@@ -551,35 +674,6 @@ export default function BrokerPortalCreateLeadPage() {
                 </MenuItem>
               ))}
             </TextField>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              select
-              size="small"
-              label="Priority"
-              value={form.priority}
-              onChange={(event) => update({ priority: event.target.value as LeadPriority })}
-              sx={fieldSx}
-            >
-              {(['High', 'Medium', 'Low'] as LeadPriority[]).map((priority) => (
-                <MenuItem key={priority} value={priority}>
-                  {priority}
-                </MenuItem>
-              ))}
-            </TextField>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              size="small"
-              type="date"
-              label="Follow-up Date"
-              InputLabelProps={{ shrink: true }}
-              value={form.followUpAt}
-              onChange={(event) => update({ followUpAt: event.target.value })}
-              sx={fieldSx}
-            />
           </Grid>
         </Grid>
       </PortalSectionCard>
@@ -634,12 +728,25 @@ export default function BrokerPortalCreateLeadPage() {
                 onClick={() =>
                   update({
                     billingAddress: form.collectionAddress,
+                    billingPostcode: form.postalCode,
                   })
                 }
               >
                 <CopyIcon fontSize="small" />
               </IconButton>
             </Stack>
+            <PostcodeAddressLookup
+              postcode={form.billingPostcode}
+              onPostcodeChange={(billingPostcode) => update({ billingPostcode })}
+              onAddressSelect={(address) =>
+                update({
+                  billingPostcode: address.postalCode,
+                  billingAddress: [address.addressLine1, address.addressLine2, address.city, address.postalCode]
+                    .filter(Boolean)
+                    .join(', '),
+                })
+              }
+            />
             <TextField
               fullWidth
               multiline
@@ -648,13 +755,13 @@ export default function BrokerPortalCreateLeadPage() {
               placeholder="Leave blank if it is the same as the collection address"
               value={form.billingAddress}
               onChange={(event) => update({ billingAddress: event.target.value })}
-              sx={fieldSx}
+              sx={{ ...fieldSx, mt: 1.5 }}
             />
           </Grid>
         </Grid>
       </PortalSectionCard>
 
-      <PortalSectionCard title="Notes">
+      <PortalSectionCard title="Additional Notes (optional)">
         <TextField
           fullWidth
           multiline
@@ -666,12 +773,22 @@ export default function BrokerPortalCreateLeadPage() {
         />
       </PortalSectionCard>
 
+      <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
+        By submitting this lead, you confirm that the prospect has given permission to be contacted
+        by London Waste Management. Commission is payable only on confirmed and paid orders.
+      </Typography>
+
       <Stack direction={{ xs: 'column-reverse', sm: 'row' }} justifyContent="flex-end" spacing={1.25}>
         <Button
           variant="outlined"
           onClick={() => {
+            formRef.current = emptyForm;
+            cardFileRef.current = null;
+            draftLeadIdRef.current = null;
+            documentAttachedRef.current = false;
             setForm(emptyForm);
             setCardFile(null);
+            setDraftLeadId(null);
           }}
           disabled={isLoading}
           sx={{

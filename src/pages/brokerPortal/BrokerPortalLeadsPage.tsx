@@ -25,6 +25,7 @@ import {
   useGetPortalLeadsQuery,
   useGetPortalNegotiationsQuery,
   useGetPortalOrdersQuery,
+  useGetPortalDocumentsQuery,
   useGetPortalQuoteRequestsQuery,
 } from '@redux/apis/broker/brokerPortalApi';
 import { useAppDispatch } from '@redux/hooks';
@@ -79,6 +80,7 @@ export default function BrokerPortalLeadsPage() {
 
   const { data, isLoading } = useGetPortalLeadsQuery({});
   const { data: ordersData } = useGetPortalOrdersQuery({});
+  const { data: documentsData } = useGetPortalDocumentsQuery();
   const { data: quotesData } = useGetPortalQuoteRequestsQuery({});
   const { data: negotiationsData } = useGetPortalNegotiationsQuery({});
   const { data: dashboardData } = useGetPortalDashboardQuery();
@@ -119,7 +121,7 @@ export default function BrokerPortalLeadsPage() {
     const entry = (leadId: string) => {
       const existing = map.get(leadId);
       if (existing) return existing;
-      const created: LeadRelated = { quotes: [], negotiations: [], orders: [] };
+      const created: LeadRelated = { quotes: [], negotiations: [], orders: [], documents: [] };
       map.set(leadId, created);
       return created;
     };
@@ -132,8 +134,11 @@ export default function BrokerPortalLeadsPage() {
     for (const order of orders) {
       entry(String(order.leadId || '')).orders!.push(order);
     }
+    for (const document of documentsData?.data || []) {
+      entry(String(document.leadId || '')).documents!.push(document);
+    }
     return map;
-  }, [negotiationsData, orders, quotesData]);
+  }, [documentsData, negotiationsData, orders, quotesData]);
 
   const filteredLeads = useMemo(() => {
     const search = keyword.trim().toLowerCase();

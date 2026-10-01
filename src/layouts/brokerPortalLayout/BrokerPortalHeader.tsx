@@ -44,7 +44,23 @@ export default function BrokerPortalHeader({ onMenuClick }: { onMenuClick: () =>
   const { user } = useAppSelector(selectAuth);
   const [logoutApi] = useLogoutMutation();
   const { data: notifications = [] } = useGetUserNotificationsQuery();
-  const unreadCount = notifications.filter((notification) => !notification.read).length;
+  const brokerNotifications = (() => {
+    const ownNames = new Set(
+      [user?.username, user?.firstName]
+        .filter((name): name is string => Boolean(name?.trim()))
+        .map((name) => name.trim().toLowerCase()),
+    );
+    const seen = new Set<string>();
+    return notifications.filter((notification) => {
+      const sender = notification.senderName?.trim().toLowerCase() || '';
+      if (sender && ownNames.has(sender)) return false;
+      const key = `${notification.message}|${sender}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
+  const unreadCount = brokerNotifications.filter((notification) => !notification.read).length;
   const [markNotificationsRead] = useMarkNotificationsReadMutation();
   const [profileAnchor, setProfileAnchor] = useState<HTMLElement | null>(null);
   const [notificationAnchor, setNotificationAnchor] = useState<HTMLElement | null>(null);
@@ -56,7 +72,7 @@ export default function BrokerPortalHeader({ onMenuClick }: { onMenuClick: () =>
 
   const openNotificationPanel = async (element: HTMLElement) => {
     setNewlySeenIds(
-      new Set(notifications.filter((item) => !item.read).map((item) => item._id)),
+      new Set(brokerNotifications.filter((item) => !item.read).map((item) => item._id)),
     );
     setNotificationAnchor(element);
     if (unreadCount === 0) return;
@@ -164,14 +180,14 @@ export default function BrokerPortalHeader({ onMenuClick }: { onMenuClick: () =>
           </Typography>
         </Box>
         <Divider />
-        {notifications.length === 0 ? (
+        {brokerNotifications.length === 0 ? (
           <Box px={2} py={2.5}>
             <Typography variant="body2" color="text.secondary" textAlign="center">
               Nothing yet. Updates on your quotes and orders will appear here.
             </Typography>
           </Box>
         ) : (
-          notifications.slice(0, 15).map((notification) => (
+          brokerNotifications.slice(0, 15).map((notification) => (
             <MenuItem
               key={notification._id}
               onClick={() => openNotification(notification)}

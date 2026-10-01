@@ -15,11 +15,13 @@ import { brokerPortalTheme } from '@pages/brokerPortal/brokerPortalTheme';
 import BrokerPortalHeader from './BrokerPortalHeader';
 import BrokerPortalIdentity from './BrokerPortalIdentity';
 import { BROKER_PORTAL_NAV, isBrokerPortalNavSelected } from './brokerPortalNav';
+import useBrokerPortalSocket from './useBrokerPortalSocket';
 
 export default function BrokerPortalLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  useBrokerPortalSocket();
   const { data } = useGetPortalDashboardQuery(undefined, {
     refetchOnMountOrArgChange: false,
   });

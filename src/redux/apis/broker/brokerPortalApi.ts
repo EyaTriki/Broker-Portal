@@ -105,6 +105,18 @@ export const brokerPortalApi = createApi({
       providesTags: ['PortalDashboard'],
     }),
 
+    updatePortalProfile: builder.mutation<
+      { data: Broker },
+      { bankAccountName?: string; bankSortCode?: string; bankAccountNumber?: string }
+    >({
+      query: (body) => ({
+        url: ENDPOINTS.BROKER_PORTAL_PROFILE,
+        method: MethodsEnum.PATCH,
+        body,
+      }),
+      invalidatesTags: ['PortalDashboard'],
+    }),
+
     getPortalLeads: builder.query<
       { data: BrokerLead[] },
       { status?: string; keyword?: string; priority?: string }
@@ -255,7 +267,7 @@ export const brokerPortalApi = createApi({
         method: MethodsEnum.PATCH,
         body,
       }),
-      invalidatesTags: ['PortalNegotiations', 'PortalLeads', 'PortalDashboard'],
+      invalidatesTags: ['PortalNegotiations', 'PortalOrders', 'PortalLeads', 'PortalDashboard'],
     }),
 
     /** Appends a dated note to the negotiation trail and moves the offer on. */
@@ -271,7 +283,7 @@ export const brokerPortalApi = createApi({
           ...(proposedPrice != null ? { counterOffer: proposedPrice } : {}),
         },
       }),
-      invalidatesTags: ['PortalNegotiations', 'PortalLeads', 'PortalDashboard'],
+      invalidatesTags: ['PortalNegotiations', 'PortalOrders', 'PortalLeads', 'PortalDashboard'],
     }),
 
     getPortalQuoteRequests: builder.query<
@@ -307,6 +319,14 @@ export const brokerPortalApi = createApi({
       providesTags: ['PortalOrders'],
     }),
 
+    getPortalDocuments: builder.query<{ data: BrokerDocument[] }, void>({
+      query: () => ({
+        url: ENDPOINTS.BROKER_PORTAL_DOCUMENTS,
+        method: MethodsEnum.GET,
+      }),
+      providesTags: ['PortalDocuments'],
+    }),
+
     createPortalDocument: builder.mutation<{ data: BrokerDocument }, FormData>({
       query: (body) => ({
         url: ENDPOINTS.BROKER_PORTAL_DOCUMENTS,
@@ -320,6 +340,7 @@ export const brokerPortalApi = createApi({
 
 export const {
   useGetPortalDashboardQuery,
+  useUpdatePortalProfileMutation,
   useGetPortalLeadsQuery,
   useGetPortalLeadByIdQuery,
   useCreatePortalLeadMutation,
@@ -334,5 +355,6 @@ export const {
   useGetPortalQuoteRequestsQuery,
   useGetPortalNegotiationsQuery,
   useGetPortalOrdersQuery,
+  useGetPortalDocumentsQuery,
   useCreatePortalDocumentMutation,
 } = brokerPortalApi;

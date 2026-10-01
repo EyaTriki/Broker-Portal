@@ -149,41 +149,70 @@ export default function BrokerPortalIdentity({ broker }: { broker?: Partial<Brok
             minWidth={{ md: 180 }}
           >
             <Box textAlign={{ xs: 'left', md: 'right' }}>
-              {brokerEmail && (
-                <Typography
-                  component="a"
-                  href={`mailto:${brokerEmail}`}
-                  noWrap
-                  sx={{
-                    color: '#fff',
-                    fontWeight: 800,
-                    fontSize: 15,
-                    lineHeight: 1.25,
-                    textDecoration: 'none',
-                    display: 'block',
-                    maxWidth: { xs: '100%', md: 260 },
-                    '&:hover': { color: '#dcfce7' },
-                  }}
-                >
-                  {brokerEmail}
-                </Typography>
+              {broker?.accountManagerName ? (
+                <>
+                  <Typography sx={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 700 }}>
+                    Account manager
+                  </Typography>
+                  <Typography sx={{ color: '#fff', fontWeight: 800, fontSize: 15, lineHeight: 1.3 }}>
+                    {broker.accountManagerName}
+                  </Typography>
+                  {broker.accountManagerPhone ? (
+                    <Typography
+                      component="a"
+                      href={`tel:${broker.accountManagerPhone.replace(/\s+/g, '')}`}
+                      sx={{
+                        color: 'rgba(255,255,255,0.55)',
+                        fontSize: 12.5,
+                        textDecoration: 'none',
+                        display: 'block',
+                        mt: 0.35,
+                        '&:hover': { color: '#fff' },
+                      }}
+                    >
+                      {broker.accountManagerPhone}
+                    </Typography>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  {brokerEmail && (
+                    <Typography
+                      component="a"
+                      href={`mailto:${brokerEmail}`}
+                      noWrap
+                      sx={{
+                        color: '#fff',
+                        fontWeight: 800,
+                        fontSize: 15,
+                        lineHeight: 1.25,
+                        textDecoration: 'none',
+                        display: 'block',
+                        maxWidth: { xs: '100%', md: 260 },
+                        '&:hover': { color: '#dcfce7' },
+                      }}
+                    >
+                      {brokerEmail}
+                    </Typography>
+                  )}
+                  {brokerPhone ? (
+                    <Typography
+                      component="a"
+                      href={`tel:${brokerPhone.replace(/\s+/g, '')}`}
+                      sx={{
+                        color: 'rgba(255,255,255,0.55)',
+                        fontSize: 12.5,
+                        textDecoration: 'none',
+                        display: 'block',
+                        mt: 0.35,
+                        '&:hover': { color: '#fff' },
+                      }}
+                    >
+                      {brokerPhone}
+                    </Typography>
+                  ) : null}
+                </>
               )}
-              {brokerPhone ? (
-                <Typography
-                  component="a"
-                  href={`tel:${brokerPhone.replace(/\s+/g, '')}`}
-                  sx={{
-                    color: 'rgba(255,255,255,0.55)',
-                    fontSize: 12.5,
-                    textDecoration: 'none',
-                    display: 'block',
-                    mt: 0.35,
-                    '&:hover': { color: '#fff' },
-                  }}
-                >
-                  {brokerPhone}
-                </Typography>
-              ) : null}
             </Box>
 
             <Button

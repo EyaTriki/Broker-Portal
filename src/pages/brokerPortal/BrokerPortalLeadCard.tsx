@@ -46,10 +46,13 @@ import PostcodeAddressLookup from '@components/autocomplete/PostcodeAddressLooku
 import { resolveIcon, type MuiIconComponent } from '@utils/resolveMuiIcon';
 import { dateInputToIso, toDateInputValue } from '@utils/dateUtils';
 import {
+  COLLECTION_DAYS,
+  COLLECTION_FREQUENCIES,
   COLLECTION_TIME_SLOTS,
   COMMUNICATION_TYPES,
   LEAD_STAGE_FLOW,
   LEAD_STAGE_LABELS,
+  deriveLeadProgressStage,
   deriveLeadStage,
   getContactedStatus,
   getLeadStageChipSx,
@@ -64,6 +67,7 @@ import {
 } from 'types/models/Broker';
 import {
   BROKER_PORTAL_STAGE_DESCRIPTIONS,
+  BROKER_PORTAL_STAGE_HINTS,
   formatPortalDate,
   formatPortalMoney,
   getLeadInitials,
@@ -91,15 +95,6 @@ const STAGE_ICONS: Record<Exclude<LeadStage, 'Lost'>, MuiIconComponent> = {
   ContactBackOffice: resolveIcon(SupportAgentOutlinedIcon),
 };
 
-const FREQUENCIES = [
-  'Daily',
-  '2x per week',
-  '3x per week',
-  'Weekly',
-  'Fortnightly',
-  'Monthly',
-];
-
 const fieldSx = {
   '& .MuiOutlinedInput-root': { borderRadius: 2.5, bgcolor: '#fff' },
 };
@@ -115,11 +110,16 @@ const outlinedButtonSx = {
 interface EditForm {
   companyName: string;
   industry: string;
+  firstName: string;
+  lastName: string;
   contactName: string;
   phone: string;
+  secondaryPhone: string;
   email: string;
   wasteType: string;
+  binSize: string;
   frequency: string;
+  collectionDays: string[];
   collectionDate: string;
   preferredTime: string;
   postalCode: string;
@@ -133,15 +133,32 @@ interface EditForm {
   notes: string;
 }
 
+function splitContactName(lead: BrokerLead) {
+  if (lead.firstName || lead.lastName) {
+    return { firstName: lead.firstName || '', lastName: lead.lastName || '' };
+  }
+  const parts = (lead.contactName || '').trim().split(/\s+/).filter(Boolean);
+  return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') };
+}
+
 function leadToForm(lead: BrokerLead): EditForm {
+  const name = splitContactName(lead);
   return {
     companyName: lead.companyName || '',
     industry: lead.industry || lead.productSubtype || '',
+    firstName: name.firstName,
+    lastName: name.lastName,
     contactName: lead.contactName || '',
     phone: lead.phone || '',
+    secondaryPhone: lead.secondaryPhone || '',
     email: lead.email || '',
     wasteType: lead.wasteType || '',
+    binSize: lead.binSize || lead.estimatedQuantity || '',
     frequency: lead.frequency || '',
+    collectionDays: (lead.preferredCollectionDays || '')
+      .split(',')
+      .map((day) => day.trim())
+      .filter(Boolean),
     collectionDate: toDateInputValue(lead.preferredCollectionDate),
     preferredTime: lead.preferredCollectionTime || lead.preferredContactTime || 'AnyTime',
     postalCode: lead.postalCode || '',
@@ -161,6 +178,21 @@ export function getLeadSiteAddress(lead: BrokerLead) {
     .map((part) => (part || '').trim())
     .filter(Boolean)
     .join(', ');
+}
+
+function SummaryField({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <Box>
+      <Typography
+        variant="caption"
+        color={brokerPortalTheme.textSecondary}
+        sx={{ letterSpacing: '0.06em', fontWeight: 800 }}
+      >
+        {label}
+      </Typography>
+      <Typography fontWeight={800}>{value?.trim() || 'N/A'}</Typography>
+    </Box>
+  );
 }
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
@@ -231,11 +263,13 @@ export default function BrokerPortalLeadCard({
   const currentLead = detailResponse?.data || lead;
   const related: LeadRelated = detailResponse?.data?.related || knownRelated || {};
   const stage = deriveLeadStage(currentLead, related);
-  const stageIndex = getLeadStageIndex(stage);
+  const progressStage = deriveLeadProgressStage(currentLead, related);
+  const progressIndex = getLeadStageIndex(progressStage);
+  const nextStage = LEAD_STAGE_FLOW[progressIndex + 1];
   const stageProgress =
     stage === 'Lost'
       ? 100
-      : Math.round((stageIndex / (LEAD_STAGE_FLOW.length - 1)) * 100);
+      : Math.round((progressIndex / (LEAD_STAGE_FLOW.length - 1)) * 100);
   const activeQuote = related.quotes?.find(
     (quote) => !['Rejected', 'Cancelled', 'Draft'].includes(quote.status),
   );
@@ -248,14 +282,13 @@ export default function BrokerPortalLeadCard({
 
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<EditForm>(() => leadToForm(lead));
-  const [communicationType, setCommunicationType] =
-    useState<CommunicationType>('Phone Call');
+  const [communicationType, setCommunicationType] = useState<CommunicationType>('Call');
   const [communicationText, setCommunicationText] = useState('');
-  const [followUpDate, setFollowUpDate] = useState('');
   const [negotiationFeedback, setNegotiationFeedback] = useState('');
   const [proposedPrice, setProposedPrice] = useState('');
   const [approvedPrice, setApprovedPrice] = useState('');
   const [stepNote, setStepNote] = useState('');
+  const [selectedStage, setSelectedStage] = useState<Exclude<LeadStage, 'Lost'> | null>(null);
 
   const [updateLead, { isLoading: updatingLead }] = useUpdatePortalLeadMutation();
   const [addCommunication, { isLoading: addingCommunication }] =
@@ -280,12 +313,24 @@ export default function BrokerPortalLeadCard({
     markingLost ||
     uploading;
 
+  const viewedStage: Exclude<LeadStage, 'Lost'> =
+    selectedStage !== null && getLeadStageIndex(selectedStage) <= progressIndex
+      ? selectedStage
+      : progressStage;
+
   const logs = currentLead.communicationLogs || [];
   const documents = related.documents || [];
+  const stageLabel = LEAD_STAGE_LABELS[viewedStage];
   const stageDocuments = documents.filter((document) =>
-    document.title?.startsWith(`${LEAD_STAGE_LABELS[stage]} -`),
+    document.title?.startsWith(`${stageLabel} -`),
   );
+  const stageNotes = logs.filter((entry) => entry.detail?.startsWith(`[${stageLabel}]`));
   const businessCard = documents.find((document) => document.type === 'BusinessCard');
+  const profileImage = documents.find((document) => {
+    const mime = document.mimeType || '';
+    const name = `${document.fileName || ''} ${document.fileUrl || ''}`;
+    return mime.startsWith('image/') || /\.(png|jpe?g|gif|webp)(\?|$)/i.test(name);
+  });
   const negotiationUpdates = useMemo(
     () =>
       (negotiation?.activityLog || []).filter(
@@ -319,12 +364,10 @@ export default function BrokerPortalLeadCard({
         leadId,
         body: {
           communicationLogs: withNewLog(communicationType, communicationText.trim()),
-          ...(followUpDate ? { followUpAt: dateInputToIso(followUpDate) } : {}),
           ...(contactedStatus ? { status: contactedStatus } : {}),
         },
       }).unwrap();
       setCommunicationText('');
-      setFollowUpDate('');
       dispatch(showSuccess('Communication logged'));
     } catch (error: any) {
       showRequestError(error, 'Failed to log communication');
@@ -416,7 +459,10 @@ export default function BrokerPortalLeadCard({
     try {
       await updateNegotiation({
         negotiationId: targetId,
-        body: { status: 'Agreed', agreedAmount: amount },
+        body: {
+          agreedAmount: amount,
+          ...(negotiation?.status === 'Closed' ? {} : { status: 'Agreed' }),
+        },
       }).unwrap();
       setApprovedPrice('');
       dispatch(showSuccess('Customer price approval recorded'));
@@ -459,7 +505,7 @@ export default function BrokerPortalLeadCard({
         body: {
           communicationLogs: withNewLog(
             'Internal Note',
-            `[${LEAD_STAGE_LABELS[stage]}] ${stepNote.trim()}`,
+            `[${LEAD_STAGE_LABELS[viewedStage]}] ${stepNote.trim()}`,
           ),
         },
       }).unwrap();
@@ -476,7 +522,7 @@ export default function BrokerPortalLeadCard({
       body.append('file', file);
       body.append('leadId', leadId);
       body.append('companyName', currentLead.companyName);
-      body.append('title', `${LEAD_STAGE_LABELS[stage]} - ${file.name}`);
+      body.append('title', `${LEAD_STAGE_LABELS[viewedStage]} - ${file.name}`);
       body.append('type', 'Other');
       await uploadDocument(body).unwrap();
       dispatch(showSuccess('Attachment uploaded'));
@@ -486,7 +532,8 @@ export default function BrokerPortalLeadCard({
   };
 
   const saveDetails = async () => {
-    if (!editForm.companyName.trim() || !editForm.contactName.trim()) {
+    const contactName = [editForm.firstName, editForm.lastName].filter(Boolean).join(' ').trim();
+    if (!editForm.companyName.trim() || !contactName) {
       dispatch(showErrorSnackbar('Company and contact name are required'));
       return;
     }
@@ -496,11 +543,16 @@ export default function BrokerPortalLeadCard({
         body: {
           companyName: editForm.companyName.trim(),
           industry: editForm.industry.trim(),
-          contactName: editForm.contactName.trim(),
+          firstName: editForm.firstName.trim(),
+          lastName: editForm.lastName.trim(),
+          contactName,
           phone: editForm.phone.trim(),
+          secondaryPhone: editForm.secondaryPhone.trim(),
           email: editForm.email.trim(),
           wasteType: editForm.wasteType.trim(),
+          binSize: editForm.binSize.trim(),
           frequency: editForm.frequency,
+          preferredCollectionDays: editForm.collectionDays.join(','),
           preferredCollectionDate: dateInputToIso(editForm.collectionDate),
           preferredCollectionTime: editForm.preferredTime,
           addressLine1: editForm.collectionAddress.trim(),
@@ -530,18 +582,79 @@ export default function BrokerPortalLeadCard({
     }
   };
 
-  const renderCurrentStep = () => {
-    if (stage === 'Lost') {
-      return (
-        <Typography color={brokerPortalTheme.textSecondary}>
-          This opportunity is closed. You can still review its history and documents.
-        </Typography>
-      );
+  const continueToContact = async () => {
+    try {
+      await updateLead({ leadId, body: { status: 'Contacted' } }).unwrap();
+      setSelectedStage('Contact');
+      dispatch(showSuccess('Lead moved to Contact'));
+    } catch (error: any) {
+      showRequestError(error, 'Failed to move the lead to Contact');
     }
-    if (stage === 'SubmitLead' || stage === 'Contact') {
+  };
+
+  const renderCurrentStep = () => {
+    if (viewedStage === 'SubmitLead') {
       return (
         <Stack spacing={1.5}>
+          <Box>
+            <Typography fontWeight={800}>Submit Lead</Typography>
+            <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+              Review, update and validate the lead information
+            </Typography>
+          </Box>
+          <Grid container spacing={1.5}>
+            <Grid item xs={12} sm={6}>
+              <SummaryField label="COMPANY" value={currentLead.companyName} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <SummaryField label="CONTACT PERSON" value={currentLead.contactName} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <SummaryField label="PHONE" value={currentLead.phone} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <SummaryField label="EMAIL" value={currentLead.email} />
+            </Grid>
+            <Grid item xs={12}>
+              <SummaryField label="ADDRESS" value={getLeadSiteAddress(currentLead)} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <SummaryField label="WASTE TYPE" value={currentLead.wasteType} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <SummaryField
+                label="VALIDATION STATUS"
+                value={currentLead.status === 'Draft' ? 'Draft' : 'Validated'}
+              />
+            </Grid>
+          </Grid>
+        </Stack>
+      );
+    }
+    if (viewedStage === 'Contact') {
+      return (
+        <Stack spacing={1.5}>
+          <Box>
+            <Typography fontWeight={800}>Contact Information</Typography>
+            <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+              Reach out to the prospect
+            </Typography>
+          </Box>
+          <Grid container spacing={1.5}>
+            <Grid item xs={12} sm={4}>
+              <SummaryField label="PHONE" value={currentLead.phone} />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <SummaryField label="EMAIL" value={currentLead.email} />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <SummaryField label="ADDRESS" value={getLeadSiteAddress(currentLead)} />
+            </Grid>
+          </Grid>
           <Typography fontWeight={800}>Interaction Notes</Typography>
+          <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+            Log calls, emails, meetings and other touchpoints
+          </Typography>
           <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
             {COMMUNICATION_TYPES.map((type) => (
               <Chip
@@ -566,41 +679,25 @@ export default function BrokerPortalLeadCard({
               />
             ))}
           </Stack>
-          <Grid container spacing={1}>
-            <Grid item xs={12} md={8}>
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="Add a contact update..."
-                value={communicationText}
-                onChange={(event) => setCommunicationText(event.target.value)}
-                sx={fieldSx}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                size="small"
-                type="date"
-                label="Follow-up date"
-                InputLabelProps={{ shrink: true }}
-                value={followUpDate}
-                onChange={(event) => setFollowUpDate(event.target.value)}
-                sx={fieldSx}
-              />
-            </Grid>
-          </Grid>
-          <Box>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder={`Add a ${communicationType.toLowerCase()} note...`}
+              value={communicationText}
+              onChange={(event) => setCommunicationText(event.target.value)}
+              sx={fieldSx}
+            />
             <Button
               variant="contained"
               onClick={saveCommunication}
               disabled={busy}
               sx={portalPrimaryButtonSx}
             >
-              Record interaction
+              Add
             </Button>
-          </Box>
-          {logs.length > 0 && (
+          </Stack>
+          {logs.length > 0 ? (
             <Stack spacing={0.75}>
               {logs.slice(0, 5).map((entry, index) => (
                 <Box
@@ -619,17 +716,35 @@ export default function BrokerPortalLeadCard({
                 </Box>
               ))}
             </Stack>
+          ) : (
+            <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+              No notes yet — log your first interaction.
+            </Typography>
           )}
         </Stack>
       );
     }
-    if (stage === 'RequestQuote') {
+    if (viewedStage === 'RequestQuote') {
       return (
         <Stack spacing={1.25}>
           <Typography fontWeight={800}>Request a Quote</Typography>
+          <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+            {BROKER_PORTAL_STAGE_DESCRIPTIONS.RequestQuote}
+          </Typography>
           {activeQuote ? (
             <>
+              <Box>
+                <Typography fontWeight={800}>Quotation request submitted</Typography>
+                <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+                  Sent to the pricing team for review.
+                </Typography>
+              </Box>
               <FooterCard title={quotePriced ? 'LWM price ready' : 'Waiting for LWM pricing'}>
+                <InfoRow label="Description" value={activeQuote.description} />
+                <InfoRow
+                  label="Proposed price"
+                  value={formatPortalMoney(activeQuote.estimatedValue)}
+                />
                 <InfoRow label="Reference" value={activeQuote.referenceCode} />
                 <InfoRow
                   label="Status"
@@ -652,11 +767,6 @@ export default function BrokerPortalLeadCard({
                   />
                 )}
               </FooterCard>
-              <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-                {quotePriced
-                  ? 'LWM has priced this quote. Continue to Negotiation to discuss it with the customer.'
-                  : 'Your quote is with the LWM team. Negotiation unlocks once they set the price.'}
-              </Typography>
             </>
           ) : (
             <Typography color={brokerPortalTheme.textSecondary}>
@@ -666,12 +776,12 @@ export default function BrokerPortalLeadCard({
         </Stack>
       );
     }
-    if (stage === 'Negotiation') {
+    if (viewedStage === 'Negotiation') {
       return (
         <Stack spacing={1.25}>
           <Typography fontWeight={800}>Negotiation</Typography>
           <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-            Track discussions, customer offers and price changes.
+            {BROKER_PORTAL_STAGE_DESCRIPTIONS.Negotiation}
           </Typography>
           <Grid container spacing={1}>
             <Grid item xs={12} md={8}>
@@ -691,6 +801,7 @@ export default function BrokerPortalLeadCard({
                 size="small"
                 type="number"
                 label="Proposed price (£)"
+                placeholder="e.g. 295"
                 value={proposedPrice}
                 onChange={(event) => setProposedPrice(event.target.value)}
                 sx={fieldSx}
@@ -704,7 +815,7 @@ export default function BrokerPortalLeadCard({
               disabled={busy}
               sx={portalPrimaryButtonSx}
             >
-              + Record update
+              Record update
             </Button>
           </Box>
           {negotiationUpdates.length ? (
@@ -734,12 +845,20 @@ export default function BrokerPortalLeadCard({
         </Stack>
       );
     }
-    if (stage === 'PriceApproval') {
+    if (viewedStage === 'PriceApproval') {
       const suggested =
         negotiation?.agreedAmount || negotiation?.counterOffer || negotiation?.quotedAmount || 0;
       return (
         <Stack spacing={1.25}>
           <Typography fontWeight={800}>Price Approval</Typography>
+          <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+            {BROKER_PORTAL_STAGE_DESCRIPTIONS.PriceApproval}
+          </Typography>
+          {negotiation?.status === 'Agreed' && (
+            <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
+              Customer has agreed. Ready to send to the back office.
+            </Typography>
+          )}
           <FooterCard title="Commercial summary">
             <InfoRow
               label="Quoted price"
@@ -758,33 +877,47 @@ export default function BrokerPortalLeadCard({
               }
             />
           </FooterCard>
-          {negotiation?.status !== 'Agreed' && (
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-              <TextField
-                fullWidth
-                size="small"
-                type="number"
-                label="Customer-approved price (£)"
-                value={approvedPrice || (suggested ? String(suggested) : '')}
-                onChange={(event) => setApprovedPrice(event.target.value)}
-                sx={fieldSx}
-              />
-              <Button
-                variant="contained"
-                onClick={approvePrice}
-                disabled={busy}
-                sx={{ ...portalPrimaryButtonSx, whiteSpace: 'nowrap' }}
-              >
-                Confirm approval
-              </Button>
-            </Stack>
-          )}
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <TextField
+              fullWidth
+              size="small"
+              type="number"
+              label="Agreed final price (£)"
+              value={approvedPrice || (suggested ? String(suggested) : '')}
+              onChange={(event) => setApprovedPrice(event.target.value)}
+              sx={fieldSx}
+            />
+            <Button
+              variant="contained"
+              onClick={approvePrice}
+              disabled={busy || !negotiation}
+              sx={{ ...portalPrimaryButtonSx, whiteSpace: 'nowrap' }}
+            >
+              Customer accepted
+            </Button>
+          </Stack>
         </Stack>
       );
     }
     return (
       <Stack spacing={1.25}>
-        <Typography fontWeight={800}>Back Office Handoff</Typography>
+        <Typography fontWeight={800}>Contact Back Office</Typography>
+        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+          Send the validated request so the back office can create the order
+        </Typography>
+        {order ? (
+          <Box>
+            <Typography fontWeight={800}>Sent to the back office</Typography>
+            <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
+              The back-office team will now create the official order and confirm it.
+            </Typography>
+          </Box>
+        ) : (
+          <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
+            Once the customer has accepted the final price, send the validated request to the back
+            office to create the order.
+          </Typography>
+        )}
         <FooterCard title="LWM status">
           <InfoRow
             label="Draft order"
@@ -804,11 +937,6 @@ export default function BrokerPortalLeadCard({
           />
           <InfoRow label="Agreed price" value={formatPortalMoney(negotiation?.agreedAmount)} />
         </FooterCard>
-        {order?.status === 'Draft' && (
-          <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-            The LWM team has your draft order and will confirm it shortly.
-          </Typography>
-        )}
       </Stack>
     );
   };
@@ -817,9 +945,15 @@ export default function BrokerPortalLeadCard({
     if (stage === 'Lost' || stage === 'ContactBackOffice') return null;
     if (stage === 'SubmitLead') {
       return (
-        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-          Log the first interaction to continue to Contact.
-        </Typography>
+        <Button
+          variant="contained"
+          endIcon={<ArrowIcon />}
+          onClick={continueToContact}
+          disabled={busy}
+          sx={portalPrimaryButtonSx}
+        >
+          Continue to Contact
+        </Button>
       );
     }
     if (stage === 'Contact') {
@@ -869,7 +1003,7 @@ export default function BrokerPortalLeadCard({
         disabled={negotiation?.status !== 'Agreed' || busy}
         sx={portalPrimaryButtonSx}
       >
-        Send draft order to Back Office
+        Continue to Contact Back Office
       </Button>
     );
   };
@@ -882,6 +1016,7 @@ export default function BrokerPortalLeadCard({
       >
         <Stack direction="row" spacing={1.35} alignItems="flex-start">
           <Avatar
+            src={profileImage?.fileUrl || undefined}
             sx={{
               width: 46,
               height: 46,
@@ -947,7 +1082,7 @@ export default function BrokerPortalLeadCard({
       <Collapse in={expanded} timeout="auto" unmountOnExit>
         <Divider />
         <Box p={{ xs: 2, sm: 2.5 }}>
-          {isFetching ? (
+          {isFetching && !detailResponse ? (
             <LinearProgress sx={{ borderRadius: 99 }} />
           ) : (
             <>
@@ -958,16 +1093,13 @@ export default function BrokerPortalLeadCard({
                     color={brokerPortalTheme.textSecondary}
                     sx={{ letterSpacing: '0.08em', fontWeight: 800 }}
                   >
-                    CURRENT STAGE ·{' '}
-                    {stage === 'Lost'
-                      ? 'LOST'
-                      : `STEP ${Math.max(stageIndex + 1, 1)} OF 6`}
+                    CURRENT STAGE · STEP {progressIndex + 1} OF 6
                   </Typography>
                   <Typography fontWeight={900} fontSize={19}>
-                    {LEAD_STAGE_LABELS[stage]}
+                    {LEAD_STAGE_LABELS[progressStage]}
                   </Typography>
                   <Typography variant="body2" color={brokerPortalTheme.textSecondary}>
-                    {BROKER_PORTAL_STAGE_DESCRIPTIONS[stage]}
+                    {BROKER_PORTAL_STAGE_HINTS[progressStage]}
                   </Typography>
                 </Box>
                 <Box textAlign="right">
@@ -993,33 +1125,49 @@ export default function BrokerPortalLeadCard({
                   },
                 }}
               />
-              <Grid container spacing={1} mt={0.5}>
+              <Grid container spacing={1} mt={1.25}>
                 {LEAD_STAGE_FLOW.map((flowStage, index) => {
                   const StageIcon = STAGE_ICONS[flowStage];
-                  const done = stageIndex > index;
-                  const active = stageIndex === index;
+                  const done = progressIndex > index;
+                  const current = progressIndex === index;
+                  const viewing = viewedStage === flowStage;
+                  const reachable = index <= progressIndex;
                   return (
                     <Grid item xs={6} sm={4} md={2} key={flowStage}>
                       <Stack
+                        component="button"
+                        type="button"
+                        disabled={!reachable}
+                        onClick={() => {
+                          if (!reachable) return;
+                          setSelectedStage(flowStage === progressStage ? null : flowStage);
+                        }}
                         alignItems="center"
                         spacing={0.45}
                         sx={{
+                          display: 'flex',
+                          width: '100%',
                           height: '100%',
                           p: 1,
                           textAlign: 'center',
                           borderRadius: 2.5,
-                          bgcolor: active ? brokerPortalTheme.accentGreenTint : '#fff',
+                          cursor: reachable ? 'pointer' : 'default',
+                          font: 'inherit',
+                          color: 'inherit',
+                          bgcolor: viewing ? brokerPortalTheme.accentGreenTint : '#fff',
                           border: `1px solid ${
-                            active ? brokerPortalTheme.accentGreen : brokerPortalTheme.cardBorder
+                            viewing ? brokerPortalTheme.accentGreen : brokerPortalTheme.cardBorder
                           }`,
+                          opacity: reachable ? 1 : 0.55,
+                          '&:disabled': { cursor: 'default' },
                         }}
                       >
                         <Avatar
                           sx={{
                             width: 29,
                             height: 29,
-                            bgcolor: done || active ? brokerPortalTheme.accentGreen : '#f1f5f4',
-                            color: done || active ? '#fff' : brokerPortalTheme.textSecondary,
+                            bgcolor: done || current ? brokerPortalTheme.accentGreen : '#f1f5f4',
+                            color: done || current ? '#fff' : brokerPortalTheme.textSecondary,
                           }}
                         >
                           {done ? (
@@ -1039,19 +1187,35 @@ export default function BrokerPortalLeadCard({
                   );
                 })}
               </Grid>
+              <Typography
+                variant="caption"
+                color={brokerPortalTheme.textSecondary}
+                display="block"
+                mt={1.25}
+              >
+                {viewedStage === progressStage ? (
+                  'Any info you add or update in these steps is shared with your LWM team.'
+                ) : (
+                  <>
+                    You&apos;re viewing <strong>{LEAD_STAGE_LABELS[viewedStage]}</strong>. Any info
+                    you update here is shared with your LWM team.
+                  </>
+                )}
+              </Typography>
             </>
           )}
         </Box>
 
-        {!isFetching && (
+        {(detailResponse || !isFetching) && (
           <>
             <Divider />
             <Box p={{ xs: 2, sm: 2.5 }}>{renderCurrentStep()}</Box>
 
             <Divider />
             <Box p={{ xs: 2, sm: 2.5 }}>
-              <Typography fontWeight={800} mb={1}>
-                Notes
+              <Typography fontWeight={800}>Notes</Typography>
+              <Typography variant="caption" color={brokerPortalTheme.textSecondary} display="block" mb={1}>
+                Add notes and attachments for the {LEAD_STAGE_LABELS[viewedStage]} step
               </Typography>
               <input
                 ref={attachmentRef}
@@ -1068,7 +1232,7 @@ export default function BrokerPortalLeadCard({
                 <TextField
                   fullWidth
                   size="small"
-                  placeholder={`Write a note for the ${LEAD_STAGE_LABELS[stage]} step...`}
+                  placeholder={`Write a note for the ${LEAD_STAGE_LABELS[viewedStage]} step...`}
                   value={stepNote}
                   onChange={(event) => setStepNote(event.target.value)}
                   sx={fieldSx}
@@ -1091,6 +1255,21 @@ export default function BrokerPortalLeadCard({
                   </Button>
                 </Stack>
               </Stack>
+              {!stageDocuments.length && !stageNotes.length && (
+                <Typography variant="caption" color={brokerPortalTheme.textSecondary} display="block" mt={1}>
+                  No notes yet for this step.
+                </Typography>
+              )}
+              {stageNotes.map((entry, index) => (
+                <Box key={`${entry.createdAt}-${index}`} mt={1}>
+                  <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+                    {formatPortalDate(entry.createdAt)} · {entry.actorName}
+                  </Typography>
+                  <Typography fontSize={13.5}>
+                    {entry.detail.replace(`[${stageLabel}] `, '')}
+                  </Typography>
+                </Box>
+              ))}
               {stageDocuments.map((document) => (
                 <Stack
                   key={document._id || document.id}
@@ -1115,32 +1294,60 @@ export default function BrokerPortalLeadCard({
               ))}
             </Box>
 
-            {renderContinue() && (
-              <Box px={{ xs: 2, sm: 2.5 }} pb={2}>
-                <Stack
-                  direction={{ xs: 'column', sm: 'row' }}
-                  justifyContent="space-between"
-                  alignItems={{ xs: 'stretch', sm: 'center' }}
-                  spacing={1}
-                  sx={{
-                    p: 1.5,
-                    borderRadius: 3,
-                    bgcolor: brokerPortalTheme.accentGreenTint,
-                    border: `1px solid ${brokerPortalTheme.greenBorder}`,
-                  }}
-                >
-                  <Box>
-                    <Typography fontWeight={800} fontSize={13.5}>
-                      Finished with {LEAD_STAGE_LABELS[stage]}?
-                    </Typography>
+            <Box px={{ xs: 2, sm: 2.5 }} pb={2}>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                justifyContent="space-between"
+                alignItems={{ xs: 'stretch', sm: 'center' }}
+                spacing={1}
+                sx={{
+                  p: 1.5,
+                  borderRadius: 3,
+                  bgcolor: brokerPortalTheme.accentGreenTint,
+                  border: `1px solid ${brokerPortalTheme.greenBorder}`,
+                }}
+              >
+                {viewedStage !== progressStage ? (
+                  <>
                     <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
-                      Your LWM team sees every update in this workflow.
+                      You&apos;re viewing <strong>{LEAD_STAGE_LABELS[viewedStage]}</strong>. The
+                      lead&apos;s current stage is <strong>{LEAD_STAGE_LABELS[progressStage]}</strong>.
                     </Typography>
-                  </Box>
-                  {renderContinue()}
-                </Stack>
-              </Box>
-            )}
+                    <Button
+                      variant="contained"
+                      onClick={() => setSelectedStage(null)}
+                      sx={portalPrimaryButtonSx}
+                    >
+                      Back to current step
+                    </Button>
+                  </>
+                ) : progressStage === 'ContactBackOffice' ? (
+                  <Typography fontWeight={700} fontSize={13}>
+                    Final step — once sent to the back office, they&apos;ll create the official
+                    order.
+                  </Typography>
+                ) : (
+                  <>
+                    <Box>
+                      <Typography fontWeight={800} fontSize={13.5}>
+                        Finished with{' '}
+                        <Box component="span" sx={{ color: brokerPortalTheme.accentGreen }}>
+                          {LEAD_STAGE_LABELS[progressStage]}
+                        </Box>
+                        ?
+                      </Typography>
+                      {nextStage && (
+                        <Typography variant="caption" color={brokerPortalTheme.textSecondary}>
+                          Move this lead forward to <strong>{LEAD_STAGE_LABELS[nextStage]}</strong>.
+                          Your LWM team will be notified.
+                        </Typography>
+                      )}
+                    </Box>
+                    {renderContinue()}
+                  </>
+                )}
+              </Stack>
+            </Box>
 
             <Box
               p={{ xs: 2, sm: 2.5 }}
@@ -1167,17 +1374,45 @@ export default function BrokerPortalLeadCard({
                   <FooterCard title="Waste details">
                     <InfoRow label="Type" value={currentLead.wasteType} />
                     <InfoRow label="Frequency" value={currentLead.frequency} />
-                    <InfoRow label="Time slot" value={currentLead.preferredCollectionTime} />
                   </FooterCard>
                 </Grid>
                 <Grid item xs={12} md={4}>
-                  <FooterCard title="Timeline">
+                  <FooterCard title="Your submission">
                     <InfoRow label="Submitted" value={formatPortalDate(currentLead.createdAt)} />
-                    <InfoRow label="Last update" value={formatPortalDate(currentLead.updatedAt)} />
-                    <InfoRow label="Reference" value={currentLead.referenceCode} />
+                    <InfoRow label="Last Update" value={formatPortalDate(currentLead.updatedAt)} />
                   </FooterCard>
                 </Grid>
               </Grid>
+              {(related.contacts?.length || related.tasks?.length) ? (
+                <Grid container spacing={1.5} mt={0.5}>
+                  {!!related.contacts?.length && (
+                    <Grid item xs={12} md={6}>
+                      <FooterCard title="Contacts from back office">
+                        {related.contacts.map((contact) => (
+                          <Typography key={contact._id || contact.id || contact.email} variant="caption">
+                            {[contact.name, contact.jobTitle, contact.phone, contact.email]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </Typography>
+                        ))}
+                      </FooterCard>
+                    </Grid>
+                  )}
+                  {!!related.tasks?.length && (
+                    <Grid item xs={12} md={6}>
+                      <FooterCard title="Tasks from back office">
+                        {related.tasks.map((task) => (
+                          <Typography key={task._id || task.id || task.title} variant="caption">
+                            {[task.title, task.status, task.dueAt ? formatPortalDate(task.dueAt) : '']
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </Typography>
+                        ))}
+                      </FooterCard>
+                    </Grid>
+                  )}
+                </Grid>
+              ) : null}
 
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap mt={1.5}>
                 <Button
@@ -1250,10 +1485,22 @@ export default function BrokerPortalLeadCard({
                       <TextField
                         fullWidth
                         size="small"
-                        label="Contact Name"
-                        value={editForm.contactName}
+                        label="First Name"
+                        value={editForm.firstName}
                         onChange={(event) =>
-                          setEditForm({ ...editForm, contactName: event.target.value })
+                          setEditForm({ ...editForm, firstName: event.target.value })
+                        }
+                        sx={fieldSx}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={4}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Last Name"
+                        value={editForm.lastName}
+                        onChange={(event) =>
+                          setEditForm({ ...editForm, lastName: event.target.value })
                         }
                         sx={fieldSx}
                       />
@@ -1282,7 +1529,19 @@ export default function BrokerPortalLeadCard({
                         sx={fieldSx}
                       />
                     </Grid>
-                    <Grid item xs={12} md={6}>
+                    <Grid item xs={12} md={4}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Bin Size"
+                        value={editForm.binSize}
+                        onChange={(event) =>
+                          setEditForm({ ...editForm, binSize: event.target.value })
+                        }
+                        sx={fieldSx}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={4}>
                       <TextField
                         fullWidth
                         size="small"
@@ -1307,12 +1566,46 @@ export default function BrokerPortalLeadCard({
                         sx={fieldSx}
                       >
                         <MenuItem value="">Select frequency...</MenuItem>
-                        {FREQUENCIES.map((frequency) => (
+                        {COLLECTION_FREQUENCIES.map((frequency) => (
                           <MenuItem key={frequency} value={frequency}>
                             {frequency}
                           </MenuItem>
                         ))}
                       </TextField>
+                    </Grid>
+                    <Grid item xs={12}>
+                      <Typography variant="body2" fontWeight={800} mb={1}>
+                        Preferred Collection Day
+                      </Typography>
+                      <Stack direction="row" flexWrap="wrap" gap={0.75}>
+                        {COLLECTION_DAYS.map((day) => {
+                          const selected = editForm.collectionDays.includes(day);
+                          return (
+                            <Chip
+                              key={day}
+                              label={day}
+                              onClick={() =>
+                                setEditForm({
+                                  ...editForm,
+                                  collectionDays: selected
+                                    ? editForm.collectionDays.filter((item) => item !== day)
+                                    : [...editForm.collectionDays, day],
+                                })
+                              }
+                              sx={{
+                                fontWeight: 800,
+                                bgcolor: selected ? brokerPortalTheme.accentGreen : '#fff',
+                                color: selected ? '#fff' : brokerPortalTheme.textPrimary,
+                                border: `1px solid ${
+                                  selected
+                                    ? brokerPortalTheme.accentGreen
+                                    : brokerPortalTheme.cardBorder
+                                }`,
+                              }}
+                            />
+                          );
+                        })}
+                      </Stack>
                     </Grid>
                     <Grid item xs={12} md={6}>
                       <TextField
@@ -1340,7 +1633,14 @@ export default function BrokerPortalLeadCard({
                         }
                         sx={fieldSx}
                       >
-                        {COLLECTION_TIME_SLOTS.map((slot) => (
+                        {(editForm.preferredTime &&
+                        !COLLECTION_TIME_SLOTS.some((slot) => slot.value === editForm.preferredTime)
+                          ? [
+                              ...COLLECTION_TIME_SLOTS,
+                              { value: editForm.preferredTime, label: editForm.preferredTime },
+                            ]
+                          : COLLECTION_TIME_SLOTS
+                        ).map((slot) => (
                           <MenuItem key={slot.value} value={slot.value}>
                             {slot.label}
                           </MenuItem>

@@ -105,25 +105,43 @@ const STATUS_TO_STAGE: Record<LeadStatus, LeadStage> = {
   Lost: 'Lost',
 };
 
+export interface LeadRelatedContact {
+  _id?: string;
+  id?: string;
+  name?: string;
+  phone?: string;
+  email?: string;
+  jobTitle?: string;
+}
+
+export interface LeadRelatedTask {
+  _id?: string;
+  id?: string;
+  title?: string;
+  type?: string;
+  status?: string;
+  dueAt?: string | null;
+}
+
 export interface LeadRelated {
   quotes?: BrokerQuoteRequest[];
   negotiations?: BrokerNegotiation[];
   orders?: BrokerOrder[];
   documents?: BrokerDocument[];
+  contacts?: LeadRelatedContact[];
+  tasks?: LeadRelatedTask[];
 }
 
 /**
- * Resolves which of the six portal steps a lead is on. The lead status alone
- * cannot separate Negotiation from Price Approval or the back-office handoff,
- * so when the lead's quotes, negotiations and orders are available they refine
- * the answer. Without them the status mapping is used as-is.
+ * How far the journey got, ignoring a Lost status. Quotes, negotiations and
+ * orders separate Negotiation, Price Approval and the back-office handoff,
+ * which the lead status alone cannot. Used to keep earlier steps open after
+ * the lead moves on or is closed.
  */
-export function deriveLeadStage(
+export function deriveLeadProgressStage(
   lead: Pick<BrokerLead, 'status'>,
   related?: LeadRelated,
-): LeadStage {
-  if (lead.status === 'Lost') return 'Lost';
-
+): Exclude<LeadStage, 'Lost'> {
   const orders = related?.orders || [];
   if (orders.some((order) => order.status !== 'Cancelled')) return 'ContactBackOffice';
 
@@ -146,7 +164,23 @@ export function deriveLeadStage(
   );
   if (hasLiveQuote) return 'RequestQuote';
 
-  return STATUS_TO_STAGE[lead.status] || 'SubmitLead';
+  const fromStatus = STATUS_TO_STAGE[lead.status];
+  if (!fromStatus || fromStatus === 'Lost') return 'SubmitLead';
+  return fromStatus;
+}
+
+/**
+ * Resolves which of the six portal steps a lead is on. The lead status alone
+ * cannot separate Negotiation from Price Approval or the back-office handoff,
+ * so when the lead's quotes, negotiations and orders are available they refine
+ * the answer. Without them the status mapping is used as-is.
+ */
+export function deriveLeadStage(
+  lead: Pick<BrokerLead, 'status'>,
+  related?: LeadRelated,
+): LeadStage {
+  if (lead.status === 'Lost') return 'Lost';
+  return deriveLeadProgressStage(lead, related);
 }
 
 /**
@@ -157,23 +191,28 @@ export function getContactedStatus(status: LeadStatus): LeadStatus | undefined {
   return status === 'Draft' || status === 'NewLead' ? 'Contacted' : undefined;
 }
 
-/** Communication types offered by the back office log dialog. */
-export const COMMUNICATION_TYPES = [
-  'Phone Call',
-  'Email',
-  'WhatsApp',
-  'Site Visit',
-  'Internal Note',
-] as const;
+/** Interaction types on the Contact step. */
+export const COMMUNICATION_TYPES = ['Call', 'Email', 'Meeting', 'Other'] as const;
 
 export type CommunicationType = (typeof COMMUNICATION_TYPES)[number];
 
-/** Mirrors the backend `available` enum in models/Task.js. */
 export const COLLECTION_TIME_SLOTS: Array<{ value: string; label: string }> = [
   { value: 'AnyTime', label: 'Any Time' },
   { value: '7am-12pm', label: '7am-12pm' },
   { value: '12pm-5pm', label: '12pm-5pm' },
 ];
+
+export const COLLECTION_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+
+export const COLLECTION_FREQUENCIES = [
+  'Daily',
+  '2x per week',
+  '3x per week',
+  'Weekly',
+  'Fortnightly',
+  'Monthly',
+  'Ad-hoc / One-off',
+] as const;
 
 export interface Broker {
   _id: string;
@@ -187,6 +226,13 @@ export interface Broker {
   address?: string;
   commissionType: CommissionType;
   commissionValue: number;
+  commissionPaymentDays?: number;
+  accountManagerName?: string;
+  accountManagerEmail?: string;
+  accountManagerPhone?: string;
+  bankAccountName?: string;
+  bankSortCode?: string;
+  bankAccountNumber?: string;
   notes?: string;
   userId?: string | null;
   prospects?: number;
@@ -212,7 +258,10 @@ export interface BrokerLead {
   brokerId: string;
   companyName: string;
   contactName: string;
+  firstName?: string;
+  lastName?: string;
   phone?: string;
+  secondaryPhone?: string;
   email?: string;
   /** Owned by the back office; the portal maps it to a journey step. */
   status: LeadStatus;
@@ -222,6 +271,8 @@ export interface BrokerLead {
   industry?: string;
   preferredCollectionDate?: string | null;
   preferredCollectionTime?: string;
+  preferredCollectionDays?: string;
+  binSize?: string;
   billingAddress?: string;
   followUpAt?: string | null;
   pipelineValue?: number;
@@ -239,6 +290,7 @@ export interface BrokerLead {
   lastActivityAt?: string;
   /** Legacy aliases still present on older records. */
   productSubtype?: string;
+  estimatedQuantity?: string;
   preferredContactTime?: string;
   activityLog?: Array<{
     action: string;
@@ -262,6 +314,8 @@ export interface CreateLeadPayload {
   industry?: string;
   preferredCollectionDate?: string | null;
   preferredCollectionTime?: string;
+  preferredCollectionDays?: string;
+  binSize?: string;
   billingAddress?: string;
   followUpAt?: string | null;
   pipelineValue?: number;
@@ -300,6 +354,7 @@ export interface CreateLeadPayload {
   team?: string;
   territory?: string;
   reminder?: string;
+  status?: LeadStatus;
 }
 
 export type UpdateLeadPayload = Partial<CreateLeadPayload> & {
