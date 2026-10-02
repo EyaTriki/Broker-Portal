@@ -29,6 +29,18 @@ export interface ScanProgress {
 }
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+/**
+ * Same address with the gaps Tesseract inserts around "@" and dots.
+ * Spaces are horizontal only, so the match cannot run onto the next line.
+ */
+const LOOSE_EMAIL_RE =
+  /[a-z0-9][a-z0-9._%+-]*(?:[ \t]*[._][ \t]*[a-z0-9][a-z0-9._%+-]*)*[ \t]*@[ \t]*[a-z0-9][a-z0-9-]*(?:[ \t]*[.,][ \t]*[a-z0-9][a-z0-9-]*)*[ \t]*[.,][ \t]*[a-z]{2,24}\b/i;
+/** "company co.uk" — a dot read as a space. The ending must be a real public suffix. */
+const SPACED_DOMAIN_EMAIL_RE =
+  /[a-z0-9][a-z0-9._%+-]*(?:[ \t]*[._][ \t]*[a-z0-9][a-z0-9._%+-]*)*[ \t]*@[ \t]*[a-z0-9][a-z0-9-]*(?:[ \t]+[a-z0-9][a-z0-9-]*)*[ \t]+(?:co\.uk|org\.uk|gov\.uk|ac\.uk|ltd\.uk|net\.uk|com|co|uk|org|net|io|biz|info|eu|ie|us|edu|gov|london|wales|scot|cymru)\b/i;
+const SPOKEN_AT_RE =
+  /\b([a-z0-9](?:[a-z0-9._%+-]*\.[a-z0-9._%+-]+)+|info|sales|hello|enquiries|enquiry|admin|office|contact|accounts|support|team|reception|general|mail)\s+at\s+(?!www\.)([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24})\b/i;
+const LABELLED_EMAIL_RE = /^(?:e-?mail|mail)\s*[:.]?\s*(.+)$|^(?:e)\s*[:.]\s*(.+)$/i;
 const WEBSITE_RE = /\b(?:https?:\/\/|www\.)[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?/i;
 const UK_POSTCODE_RE = /\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/i;
 const PHONE_CANDIDATE_RE = /\+?\d[\d\s().\-/]{7,}\d/g;
@@ -128,9 +140,80 @@ function looksLikeCompanyLine(line: string) {
   return letters >= Math.max(3, line.length * 0.6) && symbols <= 1;
 }
 
+/**
+ * Tesseract rarely prints a clean "@". It leaves spaces around it, reads the
+ * dot in ".co.uk" as a gap, or emits © / ® / the word "at" instead.
+ */
+function prepareEmailText(rawText: string) {
+  const repaired = rawText
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/＠/g, '@')
+    .replace(/([a-z0-9._%+-])\s*[©®℗]\s*(?=[a-z0-9])/gi, '$1@')
+    .replace(/@[ \t]*[\r\n]+[ \t]*/g, '@');
+
+  return repaired
+    .split(/\r?\n/)
+    .map((line) => restoreLabelledAt(line.replace(SPOKEN_AT_RE, '$1@$2')))
+    .join('\n');
+}
+
+function restoreLabelledAt(line: string) {
+  if (line.includes('@')) return line;
+  const labelled = line.match(LABELLED_EMAIL_RE);
+  if (!labelled) return line;
+
+  const remainder = (labelled[1] || labelled[2]).trim();
+  const domain = remainder.match(/([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24})$/i);
+  if (!domain || domain.index === undefined) return line;
+
+  const local = remainder.slice(0, domain.index).trim().replace(/\s+/g, '');
+  if (!/^[a-z0-9._%+-]+$/i.test(local)) return line;
+  return `${local}@${domain[1]}`;
+}
+
+function normaliseEmail(raw: string) {
+  const at = raw.indexOf('@');
+  if (at < 0) return undefined;
+
+  const local = raw
+    .slice(0, at)
+    .trim()
+    .replace(/\s*[._]\s*/g, '.')
+    .replace(/\s+/g, '');
+  const domain = raw
+    .slice(at + 1)
+    .trim()
+    .replace(/\s*[.,]\s*/g, '.')
+    .replace(/\s+/g, '.')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.|\.$/g, '')
+    .toLowerCase();
+
+  const email = `${local.toLowerCase()}@${domain}`;
+  const match = email.match(EMAIL_RE)?.[0];
+  if (!match || match !== email) return undefined;
+  return email;
+}
+
+function extractEmail(rawText: string) {
+  const prepared = prepareEmailText(rawText);
+  for (const pattern of [LOOSE_EMAIL_RE, SPACED_DOMAIN_EMAIL_RE]) {
+    const matches = prepared.matchAll(new RegExp(pattern.source, 'gi'));
+    for (const match of matches) {
+      const email = normaliseEmail(match[0]);
+      if (email) return email;
+    }
+  }
+  return undefined;
+}
+
+function containsEmail(text: string) {
+  return Boolean(extractEmail(text));
+}
+
 /** A card line that plausibly holds a person's name rather than a company or contact detail. */
 function looksLikePersonName(line: string) {
-  if (EMAIL_RE.test(line) || WEBSITE_RE.test(line) || /\d/.test(line)) return false;
+  if (containsEmail(line) || WEBSITE_RE.test(line) || /\d/.test(line)) return false;
   if (COMPANY_HINTS.test(line) || JOB_TITLE_HINTS.test(line)) return false;
 
   const words = line.replace(HONORIFICS, '').trim().split(/\s+/);
@@ -146,8 +229,8 @@ export function parseBusinessCardText(rawText: string): ParsedBusinessCard {
 
   const result: ParsedBusinessCard = { rawText };
 
-  const email = rawText.match(EMAIL_RE)?.[0];
-  if (email) result.email = email.toLowerCase();
+  const email = extractEmail(rawText);
+  if (email) result.email = email;
 
   const website = rawText.match(WEBSITE_RE)?.[0];
   // A URL and an email often share a domain; only keep a genuinely separate site.
@@ -180,7 +263,7 @@ export function parseBusinessCardText(rawText: string): ParsedBusinessCard {
     (line) =>
       JOB_TITLE_HINTS.test(line) &&
       !LEGAL_ENTITY_HINTS.test(line) &&
-      !EMAIL_RE.test(line) &&
+      !containsEmail(line) &&
       !PHONE_TEST_RE.test(line),
   );
   if (jobTitleIndex >= 0) result.jobTitle = lines[jobTitleIndex];
@@ -203,7 +286,7 @@ export function parseBusinessCardText(rawText: string): ParsedBusinessCard {
       index !== jobTitleIndex &&
       line !== nameLine &&
       looksLikeCompanyLine(line) &&
-      !EMAIL_RE.test(line) &&
+      !containsEmail(line) &&
       !WEBSITE_RE.test(line) &&
       !UK_POSTCODE_RE.test(line) &&
       !PHONE_TEST_RE.test(line),
@@ -228,7 +311,7 @@ export function parseBusinessCardText(rawText: string): ParsedBusinessCard {
   if (companyLine) result.companyName = companyLine;
 
   const addressLine = lines.find(
-    (line) => STREET_HINTS.test(line) && /\d/.test(line) && !EMAIL_RE.test(line) && !PHONE_TEST_RE.test(line),
+    (line) => STREET_HINTS.test(line) && /\d/.test(line) && !containsEmail(line) && !PHONE_TEST_RE.test(line),
   );
   if (addressLine) result.addressLine1 = addressLine;
 
